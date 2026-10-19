@@ -28,6 +28,6 @@ wait %2 2>/dev/null || true; sleep 2
 pkill -x AgentIsland || true
 open "$HOME/Applications/Agent Island.app"
 
-ffmpeg -loglevel error -y -i build/raw.mov -vf "fps=30,scale=1200:-2:flags=lanczos" -c:v libx264 -pix_fmt yuv420p -crf 20 -movflags +faststart -an docs/demo.mp4
-ffmpeg -loglevel error -y -i build/raw.mov -vf "fps=15,scale=800:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=160:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" docs/demo.gif
+ffmpeg -loglevel error -y -ss 1.0 -to 41.5 -i build/raw.mov -vf "crop=iw:540:0:0,fps=30,scale=1200:-2:flags=lanczos" -c:v libx264 -pix_fmt yuv420p -crf 20 -movflags +faststart -an docs/demo.mp4
+ffmpeg -loglevel error -y -ss 1.0 -to 41.5 -i build/raw.mov -vf "crop=iw:540:0:0,fps=15,scale=800:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=160:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" docs/demo.gif
 ls -la docs
