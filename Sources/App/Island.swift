@@ -797,7 +797,14 @@ final class IslandController: NSObject {
     func click(_ raw: CGPoint) {
         let p = CGPoint(x: raw.x, y: min(raw.y, top - 0.5))
         if let hit = pipHits.first(where: { $0.rect.contains(p) }), let s = store.sessions[hit.key] { return openChat(s) }
-        guard let id = hits.first(where: { $0.value.contains(p) })?.key else { return }
+        // Anywhere else that hovers a side (padding, gaps, its half of the notch) clicks through to
+        // that side's agent: the one picked with the arrows, else the one nearest the notch.
+        var id = hits.first(where: { $0.value.contains(p) })?.key
+        if id == nil, let side = side(at: p) {
+            let mine = config.config.agents.filter { $0.placement == side && store.summary($0.id) != nil }.map(\.id)
+            id = mine.first { $0 == keyFocus } ?? mine.first
+        }
+        guard let id else { return }
         let ss = store.sessions(of: id)
         if let s = ss.first(where: { $0.key == selected[id] }) ?? ss.first { openChat(s) }
     }
