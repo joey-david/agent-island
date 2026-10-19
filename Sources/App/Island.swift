@@ -88,7 +88,10 @@ final class IslandController: NSObject {
 
     private let pad: CGFloat = 12, gap: CGFloat = 10, stackStep: CGFloat = 11, maxStack = 4
     private var bodyH: CGFloat { (notch.height * 0.56).rounded() }
-    private var top: CGFloat { height }
+    /// The window pokes a few points above the screen so the topmost pixel row, where a pointer
+    /// pinned to the edge sits, is inside it rather than on its border.
+    private var overscan: CGFloat { stage ? 0 : 4 }
+    private var top: CGFloat { height - overscan }
 
     init(store: SessionStore, config: ConfigStore, stage: Bool = false) {
         self.store = store
@@ -140,13 +143,13 @@ final class IslandController: NSObject {
             nx = l.maxX - origin
             nw = r.minX - l.maxX
         }
-        window.setFrame(NSRect(x: f.minX, y: f.maxY - height, width: f.width, height: height), display: false)
+        window.setFrame(NSRect(x: f.minX, y: f.maxY - top, width: f.width, height: height), display: false)
         host.frame = view.bounds
         for l in [root, slotLayer, mask] { l.frame = view.bounds }
         for l in [root, bar, barMask, panel, slotLayer] + Array(trays.values) + Array(trayMasks.values) {
             l.contentsScale = screen.backingScaleFactor
         }
-        notch = CGRect(x: nx, y: height - nh, width: nw, height: nh)
+        notch = CGRect(x: nx, y: top - nh, width: nw, height: nh)
         for s in slots.values { s.layer.removeFromSuperlayer() }
         slots.removeAll()
         collapse()
@@ -641,7 +644,11 @@ final class IslandController: NSObject {
 
     // MARK: input
 
-    private var pointer: CGPoint { view.convert(window.mouseLocationOutsideOfEventStream, from: nil) }
+    /// Pointer in island coordinates; anything above the screen's top counts as its top row.
+    private var pointer: CGPoint {
+        let p = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        return CGPoint(x: p.x, y: min(p.y, top - 0.5))
+    }
 
     private func trackPointer() {
         for a in view.trackingAreas { view.removeTrackingArea(a) }
@@ -651,7 +658,8 @@ final class IslandController: NSObject {
         if openSide != nil { rects += pipHits.map(\.rect) }
         // One area over the whole island that also reports movement inside it, so the open side
         // always follows the pointer, however fast it crosses the notch. Silent once outside.
-        if let all = rects.first.map({ rects.dropFirst().reduce($0) { $0.union($1) } }) {
+        if var all = rects.first.map({ rects.dropFirst().reduce($0) { $0.union($1) } }) {
+            all.size.height = height - all.minY   // up through the overscan, to the window's top
             var opts: NSTrackingArea.Options = [.mouseEnteredAndExited, .mouseMoved, .activeAlways]
             if all.contains(p) { opts.insert(.assumeInside) }
             view.addTrackingArea(NSTrackingArea(rect: all, options: opts, owner: view, userInfo: nil))
@@ -751,7 +759,8 @@ final class IslandController: NSObject {
         return true
     }
 
-    func click(_ p: CGPoint) {
+    func click(_ raw: CGPoint) {
+        let p = CGPoint(x: raw.x, y: min(raw.y, top - 0.5))
         if let hit = pipHits.first(where: { $0.rect.contains(p) }), let s = store.sessions[hit.key] { return openChat(s) }
         guard let id = hits.first(where: { $0.value.contains(p) })?.key else { return }
         let ss = store.sessions(of: id)
