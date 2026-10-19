@@ -51,7 +51,7 @@ emit claude c $C idle sync-server "$PC" ""; sleep 2
 say "Hover again and use ←/→ to flip through sessions"
 sleep 5
 
-say "Claude has a question: the island widens, then drops a panel"
+say "Claude has a question: the island expands into a panel"
 "$H" --agent demo-claude --wait --pid "$A" >/dev/null <<JSON
 {"hook_event_name":"PreToolUse","session_id":"demo-a","cwd":"$HOME/projects/agent-island","tool_name":"AskUserQuestion",
  "tool_input":{"questions":[{"header":"Mascot","question":"Which mascot should sit on the right?","multiSelect":false,

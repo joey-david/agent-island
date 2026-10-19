@@ -79,7 +79,6 @@ final class IslandController: NSObject {
     /// Agent picked with the arrow keys while a tray is open, and the app to hand keys back to.
     private var keyFocus: String?
     private var keyOwner: NSRunningApplication?
-    private var dropped: Pending?
     private var tray: TrayView?
     private var trayKey = ""
     private var closeWork: DispatchWorkItem?
@@ -211,7 +210,7 @@ final class IslandController: NSObject {
         }
         symbol("apple.logo", 16)
         var x: CGFloat = 50
-        for (i, item) in ["Finder", "File", "Edit", "View", "Go", "Window", "Help"].enumerated() { x = text(item, x, bold: i == 0) + 20 }
+        for (i, item) in ["Finder", "File", "Edit", "View"].enumerated() { x = text(item, x, bold: i == 0) + 20 }
         var r: CGFloat = W - 16 - text("Mon 20 Oct  9:41", 0).rounded()
         backdrop.sublayers?.last?.frame.origin.x = r
         for name in ["battery.75percent", "wifi", "magnifyingglass", "switch.2"] { r -= 30; symbol(name, r) }
@@ -321,29 +320,18 @@ final class IslandController: NSObject {
         }
         updateTrayView(sides)
 
-        // Questions: widen first (above), then drop the panel once the widening has landed.
+        // Questions: the island morphs wider and taller in one spring (the asking side widens with
+        // it), and the content fades up into place partway through.
         if let pending {
             var span = (min: notch.midX - 210, max: notch.midX + 210)
             if let side = openSide, let r = trayRects[side] {
                 span = side == .left ? (r.minX, notch.maxX) : (notch.minX, r.maxX)
             }
-            let flat = shape(span.min, span.max, notch.minY, barRadius)
-            if dropped !== pending {
-                dismissBubble()
-                set(panel, flat, animated: animated)
-                DispatchQueue.main.asyncAfter(deadline: .now() + (animated ? 0.28 : 0)) { [weak self] in
-                    guard let self, self.store.pending.first === pending else { return }
-                    self.dropped = pending
-                    self.render()
-                }
-            } else {
-                if bubble?.pending !== pending { presentBubble(pending, width: span.max - span.min) }
-                let size = bubble!.preferredSize
-                bubble!.frame = CGRect(x: span.min, y: notch.minY - size.height, width: size.width, height: size.height)
-                set(panel, shape(span.min, span.max, notch.minY - size.height, 22), animated: animated)
-            }
+            if bubble?.pending !== pending { presentBubble(pending, width: span.max - span.min) }
+            let size = bubble!.preferredSize
+            bubble!.frame = CGRect(x: span.min, y: notch.minY - size.height, width: size.width, height: size.height)
+            set(panel, shape(span.min, span.max, notch.minY - size.height, 22), animated: animated)
         } else {
-            dropped = nil
             dismissBubble()
             set(panel, notchPath, animated: animated)
         }
@@ -624,10 +612,24 @@ final class IslandController: NSObject {
         b.onChat = { [weak self] in self?.openChat(p.session) }
         b.onResize = { [weak self] in self?.render() }
         b.alphaValue = 0
+        b.wantsLayer = true
         view.addSubview(b)
         bubble = b
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-            NSAnimationContext.runAnimationGroup { $0.duration = 0.22; b.animator().alphaValue = 1 }
+        // Content rises out of the growing shape: fade in with a slight lift once it has room.
+        let lift = CABasicAnimation(keyPath: "transform")
+        lift.fromValue = CATransform3DMakeTranslation(0, 6, 0)
+        lift.toValue = CATransform3DIdentity
+        lift.duration = 0.32
+        lift.beginTime = CACurrentMediaTime() + 0.17
+        lift.fillMode = .backwards
+        lift.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1)
+        b.layer?.add(lift, forKey: "lift")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.17) {
+            NSAnimationContext.runAnimationGroup {
+                $0.duration = 0.24
+                $0.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                b.animator().alphaValue = 1
+            }
         }
     }
 
