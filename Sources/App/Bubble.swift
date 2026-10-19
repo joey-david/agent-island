@@ -108,15 +108,16 @@ final class BubbleView: NSView, NSTextFieldDelegate {
     private var answers: [String: String] = [:]
     private var picked = Set<Int>()
     private let stack = NSStackView()
-    static let width: CGFloat = 400
+    let width: CGFloat
     private let insetH: CGFloat = 18, insetTop: CGFloat = 12, insetBottom: CGFloat = 16
-    private var inner: CGFloat { Self.width - 2 * insetH }
+    private var inner: CGFloat { width - 2 * insetH }
 
-    init(pending: Pending, agent: AgentConfig, sprite: Sprite) {
+    init(pending: Pending, agent: AgentConfig, sprite: Sprite, width: CGFloat = 400) {
+        self.width = width
         self.pending = pending
         self.agent = agent
         self.sprite = sprite
-        super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: 100))
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 100))
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 6
@@ -134,7 +135,7 @@ final class BubbleView: NSView, NSTextFieldDelegate {
 
     var preferredSize: CGSize {
         stack.layoutSubtreeIfNeeded()
-        return CGSize(width: Self.width, height: ceil(stack.fittingSize.height + insetTop + insetBottom))
+        return CGSize(width: width, height: ceil(stack.fittingSize.height + insetTop + insetBottom))
     }
 
     private func add(_ v: NSView, full: Bool = false, after: CGFloat? = nil) {
@@ -177,11 +178,8 @@ final class BubbleView: NSView, NSTextFieldDelegate {
     }
 
     private func header(chip: String, step: String?) -> NSView {
-        var views: [NSView] = [StillView(sprite.still(sprite.anims[.question]?.first?.frame ?? 0), pixelated: sprite.pixelated,
-                                         height: 16, aspect: sprite.aspect),
-                               label(agent.displayName, 11, .semibold, agent.tint),
-                               label(pending.session.project, 11, .regular, NSColor(white: 1, alpha: 0.45)),
-                               spacer()]
+        // The widened island above already names the agent; just say where this comes from.
+        var views: [NSView] = [label(pending.session.project, 11, .medium, NSColor(white: 1, alpha: 0.45)), spacer()]
         if let step { views.append(label(step, 11, .medium, NSColor(white: 1, alpha: 0.45))) }
         if !chip.isEmpty {
             let c = HoverButton(normal: NSColor(white: 1, alpha: 0.1), hot: NSColor(white: 1, alpha: 0.1), radius: 6)

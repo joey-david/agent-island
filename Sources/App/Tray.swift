@@ -56,7 +56,8 @@ private final class GlyphView: NSView {
     required init?(coder: NSCoder) { nil }
 }
 
-/// Text half of an open tray. Sprites stay in the island's layer tree and glide in beside it.
+/// Text half of an open tray, at notch height. Sprites stay in the island's layer tree
+/// and slide out beside it; each agent on the side gets one segment.
 final class TrayView: NSView {
     struct Row {
         let agent: AgentConfig
@@ -66,58 +67,50 @@ final class TrayView: NSView {
         let usage: Usage?
     }
 
-    static let rowH: CGFloat = 58, iconW: CGFloat = 46, edge: CGFloat = 14, top: CGFloat = 6
+    static let segW: CGFloat = 270, inset: CGFloat = 8, iconW: CGFloat = 30, edge: CGFloat = 12
+
+    /// Segment 0 sits next to the notch, later ones further out, matching the collapsed order.
+    static func segment(_ i: Int, side: Side, in r: CGRect) -> CGRect {
+        side == .left ? CGRect(x: r.maxX - inset - CGFloat(i + 1) * segW, y: r.minY, width: segW, height: r.height)
+                      : CGRect(x: r.minX + inset + CGFloat(i) * segW, y: r.minY, width: segW, height: r.height)
+    }
 
     init(frame: NSRect, side: Side, rows: [Row]) {
         super.init(frame: frame)
         let left = side == .left
-        let textX0 = left ? Self.edge + Self.iconW + 12 : 44
-        let textX1 = left ? frame.width - 44 : frame.width - Self.edge - Self.iconW - 12
-        let tw = textX1 - textX0
+        let h = frame.height
         for (i, r) in rows.enumerated() {
-            let y0 = Self.top + CGFloat(i) * Self.rowH
+            var seg = Self.segment(i, side: side, in: frame)
+            seg.origin.x -= frame.minX
+            let textX0 = left ? seg.minX + Self.edge + Self.iconW + 10 : seg.minX + 30
+            let textX1 = left ? seg.maxX - 30 : seg.maxX - Self.edge - Self.iconW - 10
+            let tw = textX1 - textX0
             let align: NSTextAlignment = left ? .left : .right
 
-            var usageW: CGFloat = 0
-            if let u = r.usage {
-                let pct = label("5h \(Int(u.fiveHour.rounded()))%", 10, .medium, NSColor(white: 1, alpha: 0.45), mono: true)
-                pct.sizeToFit()
-                let barW: CGFloat = 34
-                usageW = pct.frame.width + barW + 6
-                let ux = left ? textX1 - usageW : textX0
-                let track = CALayer(), fill = CALayer()
-                track.frame = CGRect(x: 0, y: 0, width: barW, height: 3)
-                track.cornerRadius = 1.5
-                track.backgroundColor = NSColor(white: 1, alpha: 0.14).cgColor
-                fill.frame = CGRect(x: 0, y: 0, width: barW * min(1, max(0.04, u.fiveHour / 100)), height: 3)
-                fill.cornerRadius = 1.5
-                fill.backgroundColor = (u.fiveHour >= 85 ? NSColor.systemOrange : r.agent.tint).cgColor
-                let bar = NSView(frame: NSRect(x: left ? ux : ux + pct.frame.width + 6, y: y0 + 13, width: barW, height: 3))
-                bar.wantsLayer = true
-                bar.layer?.addSublayer(track)
-                bar.layer?.addSublayer(fill)
-                pct.frame.origin = CGPoint(x: left ? ux + barW + 6 : ux, y: y0 + 7)
-                addSubview(bar)
-                addSubview(pct)
-            }
-
-            let name = label(r.agent.displayName, 13, .semibold, .white)
+            var title = r.agent.displayName
+            if r.usage != nil { title += "  " }
+            let name = NSTextField(labelWithAttributedString: {
+                let a = NSMutableAttributedString(string: title, attributes: [
+                    .font: NSFont.systemFont(ofSize: 11.5, weight: .semibold), .foregroundColor: NSColor.white])
+                if let u = r.usage {
+                    a.append(NSAttributedString(string: "5h \(Int(u.fiveHour.rounded()))%", attributes: [
+                        .font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium),
+                        .foregroundColor: u.fiveHour >= 85 ? NSColor.systemOrange : NSColor(white: 1, alpha: 0.4)]))
+                }
+                return a
+            }())
             name.alignment = align
-            name.frame = NSRect(x: left ? textX0 : textX0 + usageW + 8, y: y0 + 5, width: tw - usageW - 8, height: 17)
+            name.lineBreakMode = .byTruncatingTail
+            name.frame = NSRect(x: textX0, y: h / 2 - 15, width: tw, height: 15)
             addSubview(name)
 
-            let task = label(taskText(r), 11.5, .regular, NSColor(white: 1, alpha: 0.66))
-            task.alignment = align
-            task.frame = NSRect(x: textX0, y: y0 + 23, width: tw, height: 15)
-            addSubview(task)
-
-            let act = label(actionText(r), 10.5, .regular, NSColor(white: 1, alpha: 0.4))
-            act.alignment = align
-            act.frame = NSRect(x: textX0, y: y0 + 39, width: tw, height: 14)
-            addSubview(act)
+            let detail = label(detailText(r), 10.5, .regular, NSColor(white: 1, alpha: 0.55))
+            detail.alignment = align
+            detail.frame = NSRect(x: textX0, y: h / 2 + 0.5, width: tw, height: 14)
+            addSubview(detail)
 
             let g = GlyphView(state: r.state, tint: r.agent.tint)
-            g.frame.origin = CGPoint(x: left ? frame.width - 30 : 14, y: y0 + Self.rowH / 2 - 8 - 3)
+            g.frame.origin = CGPoint(x: left ? seg.maxX - 24 : seg.minX + 8, y: h / 2 - 8)
             addSubview(g)
         }
     }
@@ -133,14 +126,10 @@ final class TrayView: NSView {
         return t
     }
 
-    private func taskText(_ r: Row) -> String {
+    private func detailText(_ r: Row) -> String {
         guard let s = r.session else { return "" }
-        if let t = s.title.map(Self.clean), !t.isEmpty, !Self.generic(t) { return t }
-        return s.prompt ?? s.project
-    }
-
-    private func actionText(_ r: Row) -> String {
-        guard let s = r.session else { return "" }
+        var task = s.prompt ?? s.project
+        if let t = s.title.map(Self.clean), !t.isEmpty, !Self.generic(t) { task = t }
         let what: String
         switch r.state {
         case .question: what = "Waiting for you"
@@ -148,8 +137,8 @@ final class TrayView: NSView {
         case .done: what = "Finished " + Self.ago(s.updated)
         case .idle: what = "Idle"
         }
-        var parts = [s.project, what]
-        if r.count > 1 { parts.append("\(r.count) sessions") }
+        var parts = [task, what]
+        if r.count > 1 { parts.append("+\(r.count - 1)") }
         return parts.joined(separator: " · ")
     }
 

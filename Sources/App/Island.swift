@@ -66,6 +66,7 @@ final class IslandController: NSObject {
     private var hideToken = 0
     private var bubble: BubbleView?
     private var openSide: Side?
+    private var dropped: Pending?
     private var tray: TrayView?
     private var trayKey = ""
     private var closeWork: DispatchWorkItem?
@@ -73,9 +74,8 @@ final class IslandController: NSObject {
     private let config: ConfigStore
     var menu: (() -> NSMenu)?
 
-    private let pad: CGFloat = 12, gap: CGFloat = 10, trayW: CGFloat = 330
+    private let pad: CGFloat = 12, gap: CGFloat = 10
     private var bodyH: CGFloat { (notch.height * 0.56).rounded() }
-    private let trayBodyH: CGFloat = 27
     private var top: CGFloat { height }
 
     init(store: SessionStore, config: ConfigStore) {
@@ -172,7 +172,7 @@ final class IslandController: NSObject {
             collapse()
             window.orderFrontRegardless()
         }
-        if pending != nil || (openSide.map { sides[$0]!.isEmpty } ?? false) { openSide = nil }
+        if openSide.map({ sides[$0]!.isEmpty }) ?? false { openSide = nil }
 
         // Collapsed wings: bodies sit in a row, popping out from under the notch.
         var targets: [String: (center: CGPoint, scale: CGFloat)] = [:]
@@ -199,23 +199,25 @@ final class IslandController: NSObject {
         set(bar, barPath, animated: animated)
         set(barMask, barPath, animated: animated)
 
-        // The hovered side opens into a tray; its mascots glide down into their rows.
+        // The hovered side widens into a tray at notch height; a question then drops below it.
+        if let pending, let side = config.agent(pending.session.agent)?.placement, side != .hidden, !sides[side]!.isEmpty {
+            openSide = side
+        }
         trayRects = [:]
         for side in [Side.left, .right] {
             let rows = sides[side]!
             let path: CGPath
             if side == openSide {
-                let w = max(trayW, wings[side]!.width)
-                let h = TrayView.top * 2 + CGFloat(rows.count) * TrayView.rowH
-                let r = side == .left ? CGRect(x: notch.minX - w, y: top - h, width: w, height: h)
-                                      : CGRect(x: notch.maxX, y: top - h, width: w, height: h)
+                let w = max(CGFloat(rows.count) * TrayView.segW + TrayView.inset, wings[side]!.width)
+                let r = side == .left ? CGRect(x: notch.minX - w, y: notch.minY, width: w, height: notch.height)
+                                      : CGRect(x: notch.maxX, y: notch.minY, width: w, height: notch.height)
                 trayRects[side] = r
-                path = side == .left ? shape(r.minX, notch.maxX, r.minY, 22) : shape(notch.minX, r.maxX, r.minY, 22)
+                path = side == .left ? shape(r.minX, notch.maxX, notch.minY, barRadius) : shape(notch.minX, r.maxX, notch.minY, barRadius)
                 for (i, (a, _)) in rows.enumerated() {
-                    let rowTop = top - TrayView.top - CGFloat(i) * TrayView.rowH
-                    let ix = side == .left ? r.minX + TrayView.edge + TrayView.iconW / 2 : r.maxX - TrayView.edge - TrayView.iconW / 2
-                    targets[a.id] = (CGPoint(x: ix, y: rowTop - TrayView.rowH / 2 - 3), trayBodyH / bodyH)
-                    hits[a.id] = CGRect(x: r.minX, y: rowTop - TrayView.rowH, width: r.width, height: TrayView.rowH)
+                    let seg = TrayView.segment(i, side: side, in: r)
+                    let ix = side == .left ? seg.minX + TrayView.edge + TrayView.iconW / 2 : seg.maxX - TrayView.edge - TrayView.iconW / 2
+                    targets[a.id] = (CGPoint(x: ix, y: notch.midY), 1)
+                    hits[a.id] = seg
                 }
             } else {
                 path = side == .left ? shape(minX, notch.maxX, notch.minY, barRadius) : shape(notch.minX, maxX, notch.minY, barRadius)
@@ -225,14 +227,29 @@ final class IslandController: NSObject {
         }
         updateTrayView(sides)
 
-        // The question panel drops out of the island.
+        // Questions: widen first (above), then drop the panel once the widening has landed.
         if let pending {
-            if bubble?.pending !== pending { presentBubble(pending) }
-            let size = bubble!.preferredSize
-            let w = max(size.width, maxX - minX)
-            bubble!.frame = CGRect(x: (notch.midX - size.width / 2).rounded(), y: notch.minY - size.height, width: size.width, height: size.height)
-            set(panel, shape(notch.midX - w / 2, notch.midX + w / 2, notch.minY - size.height, 22), animated: animated)
+            var span = (min: notch.midX - 210, max: notch.midX + 210)
+            if let side = openSide, let r = trayRects[side] {
+                span = side == .left ? (r.minX, notch.maxX) : (notch.minX, r.maxX)
+            }
+            let flat = shape(span.min, span.max, notch.minY, barRadius)
+            if dropped !== pending {
+                dismissBubble()
+                set(panel, flat, animated: animated)
+                DispatchQueue.main.asyncAfter(deadline: .now() + (animated ? 0.28 : 0)) { [weak self] in
+                    guard let self, self.store.pending.first === pending else { return }
+                    self.dropped = pending
+                    self.render()
+                }
+            } else {
+                if bubble?.pending !== pending { presentBubble(pending, width: span.max - span.min) }
+                let size = bubble!.preferredSize
+                bubble!.frame = CGRect(x: span.min, y: notch.minY - size.height, width: size.width, height: size.height)
+                set(panel, shape(span.min, span.max, notch.minY - size.height, 22), animated: animated)
+            }
         } else {
+            dropped = nil
             dismissBubble()
             set(panel, notchPath, animated: animated)
         }
@@ -393,7 +410,7 @@ final class IslandController: NSObject {
         let fresh = tray == nil || !trayKey.hasPrefix("\(side)|")
         trayKey = key
         tray?.removeFromSuperview()
-        let t = TrayView(frame: CGRect(x: r.minX, y: r.minY, width: r.width, height: r.height), side: side, rows: rows)
+        let t = TrayView(frame: r, side: side, rows: rows)
         view.addSubview(t)
         tray = t
         if fresh {
@@ -461,18 +478,18 @@ final class IslandController: NSObject {
 
     // MARK: bubble
 
-    private func presentBubble(_ p: Pending) {
+    private func presentBubble(_ p: Pending, width: CGFloat) {
         bubble?.removeFromSuperview()
         let agent = config.agent(p.session.agent) ?? AgentConfig(id: p.session.agent)
-        let b = BubbleView(pending: p, agent: agent, sprite: SpriteLibrary.sprite(for: agent))
+        let b = BubbleView(pending: p, agent: agent, sprite: SpriteLibrary.sprite(for: agent), width: max(360, width))
         b.onAnswer = { [weak self] out in self?.store.answer(p, output: out) }
         b.onChat = { [weak self] in self?.openChat(p.session) }
         b.onResize = { [weak self] in self?.render() }
         b.alphaValue = 0
         view.addSubview(b)
         bubble = b
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            NSAnimationContext.runAnimationGroup { $0.duration = 0.2; b.animator().alphaValue = 1 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+            NSAnimationContext.runAnimationGroup { $0.duration = 0.22; b.animator().alphaValue = 1 }
         }
     }
 
@@ -507,7 +524,8 @@ final class IslandController: NSObject {
 
     func pointerMoved() {
         let s = side(at: pointer)
-        if let s, bubble == nil {
+        if store.pending.first != nil { return }
+        if let s {
             closeWork?.cancel()
             if s != openSide {
                 openSide = s

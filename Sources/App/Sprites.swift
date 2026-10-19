@@ -23,7 +23,7 @@ final class Sprite {
 
     var aspect: CGFloat { CGFloat(image.width) / CGFloat(frameCount) / CGFloat(image.height) }
     /// Relative display size, so a round pet and a boxy crab read as the same size.
-    var weight: CGFloat { pixelated ? 1 : 1.15 }
+    var weight: CGFloat { pixelated ? 0.84 : 1.15 }
     /// Width over height of the body, in points.
     var bodyAspect: CGFloat { body.width * aspect / body.height }
 
