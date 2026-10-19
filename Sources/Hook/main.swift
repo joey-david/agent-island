@@ -2,6 +2,7 @@
 //
 //   island-hook --agent claude [--wait]           hook JSON on stdin
 //   island-hook emit --agent aider --state working [--session S] [--cwd DIR]
+//                    [--prompt TASK] [--action TEXT] [--pid PID]
 //
 // Exits 0 immediately when the app isn't running. With --wait it blocks for the
 // app's reply (an answered question) and prints it for the agent to read.
@@ -9,7 +10,8 @@ import Darwin
 import Foundation
 
 var agent = "agent", wait = false, emit = false
-var state: String?, event: String?, session: String?, cwd: String?
+var state: String?, event: String?, session: String?, cwd: String?, prompt: String?, action: String?
+var pidArg: pid_t?
 var args = CommandLine.arguments.dropFirst().makeIterator()
 while let a = args.next() {
     switch a {
@@ -19,6 +21,9 @@ while let a = args.next() {
     case "--state": state = args.next()
     case "--session": session = args.next()
     case "--cwd": cwd = args.next()
+    case "--prompt": prompt = args.next()
+    case "--action": action = args.next()
+    case "--pid": pidArg = args.next().flatMap { pid_t($0) }
     case "emit": emit = true
     default: break
     }
@@ -53,11 +58,15 @@ for _ in 0..<8 {
     pid = info.ppid
 }
 
+if let pidArg { pid = pidArg }
+
 let env = ProcessInfo.processInfo.environment
 var msg: [String: Any] = ["v": 1, "agent": agent, "wait": wait, "pid": Int(pid), "payload": payload]
 msg["event"] = event ?? (emit ? "emit" : nil)
 msg["state"] = state
 msg["session"] = session
+msg["prompt"] = prompt
+msg["action"] = action
 msg["cwd"] = cwd ?? (emit ? FileManager.default.currentDirectoryPath : nil)
 msg["tty"] = tty
 msg["term"] = env["TERM_PROGRAM"]

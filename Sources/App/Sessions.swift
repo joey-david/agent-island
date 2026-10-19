@@ -140,6 +140,8 @@ final class SessionStore {
             s.state = .done
             s.seen = false
         case "emit":
+            if let t = msg["prompt"] as? String { s.prompt = t }
+            if let t = msg["action"] as? String { s.action = t }
             switch emitted {
             case "working": s.state = .working
             case "question": s.state = .question
