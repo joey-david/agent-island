@@ -100,6 +100,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         m.addItem(.separator())
         m.addItem(entry("Edit Config…", #selector(editConfig)))
         m.addItem(entry("Show in Menu Bar", #selector(toggleIcon), on: config.config.menuBarIcon != false))
+        m.addItem(entry("Open at Login", #selector(toggleLogin), on: LoginItem.enabled))
         let quit = NSMenuItem(title: "Quit Agent Island", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         m.addItem(quit)
     }
@@ -149,6 +150,12 @@ final class MenuController: NSObject, NSMenuDelegate {
     }
 
     @objc private func editConfig() { NSWorkspace.shared.open(ConfigStore.url) }
+
+    @objc private func toggleLogin() {
+        let on = !LoginItem.enabled
+        config.update { $0.launchAtLogin = on }
+        LoginItem.sync(on)
+    }
 
     @objc private func toggleIcon() {
         config.update { $0.menuBarIcon = !($0.menuBarIcon ?? true) }

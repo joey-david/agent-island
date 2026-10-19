@@ -11,8 +11,8 @@ CLAUDE = [
 ]
 CODEX = [
     ('SessionStart', None, False), ('SessionEnd', None, False), ('UserPromptSubmit', None, False),
-    ('PostToolUse', None, False), ('Stop', None, False), ('PermissionRequest', None, True),
-]
+    ('PostToolUse', None, False), ('Stop', None, False),
+]  # no PermissionRequest: an empty reply makes Codex ask you instead of its auto-reviewer
 
 
 def merge(path, agent, plan):

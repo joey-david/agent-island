@@ -32,6 +32,7 @@ final class IslandView: NSView {
     override func rightMouseDown(with e: NSEvent) { controller?.showMenu(e, in: self) }
     override func mouseEntered(with e: NSEvent) { controller?.pointerMoved() }
     override func mouseExited(with e: NSEvent) { controller?.pointerMoved() }
+    override func mouseMoved(with e: NSEvent) { controller?.pointerMoved() }
     override var acceptsFirstResponder: Bool { true }
     override func keyDown(with e: NSEvent) { if controller?.key(e) != true { super.keyDown(with: e) } }
 }
@@ -63,7 +64,11 @@ final class IslandController: NSObject {
     private var wings: [Side: CGRect] = [:]
     private var trayRects: [Side: CGRect] = [:]
     private var notch = CGRect.zero
-    private let height: CGFloat = 520
+    private var height: CGFloat = 520
+    /// Demo mode: draws its own wallpaper, menu bar and notch in an ordinary window, for recordings.
+    private let stage: Bool
+    private let backdrop = CALayer(), notchCover = CAShapeLayer()
+    private var hovers: [Side: CGRect] = [:]
     private var visible = false
     private var hideToken = 0
     private var bubble: BubbleView?
@@ -86,11 +91,13 @@ final class IslandController: NSObject {
     private var bodyH: CGFloat { (notch.height * 0.56).rounded() }
     private var top: CGFloat { height }
 
-    init(store: SessionStore, config: ConfigStore) {
+    init(store: SessionStore, config: ConfigStore, stage: Bool = false) {
         self.store = store
         self.config = config
+        self.stage = stage
         super.init()
         window.contentView = view
+        window.acceptsMouseMovedEvents = true
         view.controller = self
         view.wantsLayer = true
         host.layer = root
@@ -105,7 +112,15 @@ final class IslandController: NSObject {
         mask.addSublayer(barMask)
         for s in trayMasks.values { mask.addSublayer(s) }
         slotLayer.mask = mask
+        if stage {
+            root.insertSublayer(backdrop, at: 0)
+            root.addSublayer(notchCover)
+            root.cornerRadius = 14
+            root.masksToBounds = true
+            window.level = .floating
+        }
         layoutScreen()
+        if stage { window.orderFrontRegardless() }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             self?.layoutScreen()
             self?.render(animated: false)
@@ -115,6 +130,7 @@ final class IslandController: NSObject {
     // MARK: geometry
 
     private func layoutScreen() {
+        if stage { return layoutStage() }
         guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main else { return }
         let f = screen.frame
         let inset = screen.safeAreaInsets.top
@@ -135,6 +151,70 @@ final class IslandController: NSObject {
         for s in slots.values { s.layer.removeFromSuperlayer() }
         slots.removeAll()
         collapse()
+    }
+
+    private func layoutStage() {
+        guard let screen = NSScreen.main else { return }
+        let W: CGFloat = 1000
+        height = 440
+        let f = screen.frame
+        window.setFrame(NSRect(x: f.midX - W / 2, y: f.midY - height / 2, width: W, height: height), display: false)
+        host.frame = view.bounds
+        for l in [root, slotLayer, mask, backdrop] { l.frame = view.bounds }
+        for l in [root, bar, barMask, panel, slotLayer, notchCover] + Array(trays.values) + Array(trayMasks.values) {
+            l.contentsScale = screen.backingScaleFactor
+        }
+        notch = CGRect(x: W / 2 - 92, y: height - 32, width: 184, height: 32)
+        buildBackdrop(W, screen.backingScaleFactor)
+        notchCover.fillColor = NSColor.black.cgColor
+        notchCover.path = notchPath
+        let lens = CAShapeLayer()
+        lens.path = CGPath(ellipseIn: CGRect(x: notch.midX - 3, y: notch.midY - 1, width: 6, height: 6), transform: nil)
+        lens.fillColor = NSColor(srgbRed: 0.07, green: 0.09, blue: 0.14, alpha: 1).cgColor
+        lens.strokeColor = NSColor(white: 0.16, alpha: 1).cgColor
+        lens.lineWidth = 1
+        notchCover.sublayers = [lens]
+        collapse()
+    }
+
+    /// Wallpaper and a dark menu bar, so the black island reads against something.
+    private func buildBackdrop(_ W: CGFloat, _ scale: CGFloat) {
+        backdrop.sublayers = nil
+        let wall = CAGradientLayer()
+        wall.frame = backdrop.bounds
+        wall.colors = ["#1B2A6B", "#5A3D9A", "#C2588A", "#F2A65A"].compactMap { NSColor(hex: $0)?.cgColor }
+        wall.startPoint = CGPoint(x: 0, y: 1)
+        wall.endPoint = CGPoint(x: 1, y: 0)
+        backdrop.addSublayer(wall)
+        let menu = CALayer()
+        menu.frame = CGRect(x: 0, y: height - 32, width: W, height: 32)
+        menu.backgroundColor = NSColor(white: 0, alpha: 0.28).cgColor
+        backdrop.addSublayer(menu)
+        func text(_ s: String, _ x: CGFloat, bold: Bool = false) -> CGFloat {
+            let t = CATextLayer()
+            let font = NSFont.systemFont(ofSize: 13, weight: bold ? .bold : .medium)
+            t.string = NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: NSColor.white])
+            let w = (s as NSString).size(withAttributes: [.font: font]).width
+            t.frame = CGRect(x: x, y: height - 24, width: w + 2, height: 17)
+            t.contentsScale = scale
+            backdrop.addSublayer(t)
+            return x + w
+        }
+        func symbol(_ name: String, _ x: CGFloat) {
+            guard let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 13, weight: .medium).applying(.init(paletteColors: [.white]))) else { return }
+            let l = CALayer()
+            l.contents = img.cgImage(forProposedRect: nil, context: nil, hints: [.ctm: AffineTransform(scale: scale)])
+            l.contentsGravity = .resizeAspect
+            l.frame = CGRect(x: x, y: height - 25, width: 20, height: 18)
+            backdrop.addSublayer(l)
+        }
+        symbol("apple.logo", 16)
+        var x: CGFloat = 50
+        for (i, item) in ["Finder", "File", "Edit", "View", "Go", "Window", "Help"].enumerated() { x = text(item, x, bold: i == 0) + 20 }
+        var r: CGFloat = W - 16 - text("Mon 20 Oct  9:41", 0).rounded()
+        backdrop.sublayers?.last?.frame.origin.x = r
+        for name in ["battery.75percent", "wifi", "magnifyingglass", "switch.2"] { r -= 30; symbol(name, r) }
     }
 
     private func shape(_ minX: CGFloat, _ maxX: CGFloat, _ bottom: CGFloat, _ R: CGFloat) -> CGPath {
@@ -205,6 +285,10 @@ final class IslandController: NSObject {
         let minX = edges[.left]!, maxX = edges[.right]!
         wings = [.left: CGRect(x: minX, y: notch.minY, width: notch.minX - minX, height: notch.height),
                  .right: CGRect(x: notch.maxX, y: notch.minY, width: maxX - notch.maxX, height: notch.height)]
+        // Hover targets run into the notch and meet in its middle.
+        hovers = [:]
+        if minX < notch.minX { hovers[.left] = CGRect(x: minX, y: notch.minY, width: notch.midX - minX, height: notch.height) }
+        if maxX > notch.maxX { hovers[.right] = CGRect(x: notch.midX, y: notch.minY, width: maxX - notch.midX, height: notch.height) }
         let barPath = shape(minX, maxX, notch.minY, barRadius)
         set(bar, barPath, animated: animated)
         set(barMask, barPath, animated: animated)
@@ -311,7 +395,7 @@ final class IslandController: NSObject {
         trackPointer()
 
         hideToken += 1
-        if !show && visible {
+        if !show && visible && !stage {
             let token = hideToken
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
                 guard let self, token == self.hideToken else { return }
@@ -560,21 +644,23 @@ final class IslandController: NSObject {
     private func trackPointer() {
         for a in view.trackingAreas { view.removeTrackingArea(a) }
         let p = pointer
-        var rects = Array(trayRects.values)
-        for (side, r) in wings where r.width > 0 && trayRects[side] == nil { rects.append(r) }
+        var rects = trayRects.map { $0.value.union(hovers[$0.key] ?? $0.value) }
+        for (side, r) in hovers where trayRects[side] == nil { rects.append(r) }
         if openSide != nil { rects += pipHits.map(\.rect) }
-        for r in rects {
-            var opts: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways]
-            if r.contains(p) { opts.insert(.assumeInside) }
-            view.addTrackingArea(NSTrackingArea(rect: r, options: opts, owner: view, userInfo: nil))
+        // One area over the whole island that also reports movement inside it, so the open side
+        // always follows the pointer, however fast it crosses the notch. Silent once outside.
+        if let all = rects.first.map({ rects.dropFirst().reduce($0) { $0.union($1) } }) {
+            var opts: NSTrackingArea.Options = [.mouseEnteredAndExited, .mouseMoved, .activeAlways]
+            if all.contains(p) { opts.insert(.assumeInside) }
+            view.addTrackingArea(NSTrackingArea(rect: all, options: opts, owner: view, userInfo: nil))
         }
         // Areas rebuilt under a resting pointer never report "entered"; check by hand.
         if side(at: p) != openSide { DispatchQueue.main.async { [weak self] in self?.pointerMoved() } }
     }
 
     private func side(at p: CGPoint) -> Side? {
-        if let s = openSide, let r = trayRects[s], r.contains(p) { return s }
-        return wings.first { $0.value.width > 0 && $0.value.contains(p) }?.key
+        if let s = openSide, let r = trayRects[s], r.union(hovers[s] ?? r).contains(p) { return s }
+        return hovers.first { $0.value.contains(p) }?.key
     }
 
     func pointerMoved() {

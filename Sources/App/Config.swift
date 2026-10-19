@@ -27,12 +27,13 @@ struct Config: Codable {
     /// Seconds a finished session keeps its "done" dot before going quiet.
     var doneLinger: Double?
     var menuBarIcon: Bool?
+    var launchAtLogin: Bool?
 
     static let initial = Config(agents: [
         AgentConfig(id: "claude", name: "Claude Code", side: .left, sprite: "clawd", color: "#D77757"),
         AgentConfig(id: "codex", name: "Codex", side: .right, sprite: "codex", color: "#9DB8FF",
                     url: "codex://threads/{session}", app: "com.openai.codex"),
-    ], doneLinger: 1200, menuBarIcon: true)
+    ], doneLinger: 1200, menuBarIcon: true, launchAtLogin: true)
 }
 
 final class ConfigStore {
@@ -122,5 +123,21 @@ extension NSColor {
         guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
         self.init(srgbRed: CGFloat(v >> 16 & 0xFF) / 255, green: CGFloat(v >> 8 & 0xFF) / 255,
                   blue: CGFloat(v & 0xFF) / 255, alpha: 1)
+    }
+}
+
+/// Open at login through a per-user LaunchAgent that just `open`s the app bundle.
+enum LoginItem {
+    static let plist = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/LaunchAgents/fyi.joeydavid.agent-island.plist")
+    static var enabled: Bool { FileManager.default.fileExists(atPath: plist.path) }
+
+    static func sync(_ on: Bool) {
+        guard on else { try? FileManager.default.removeItem(at: plist); return }
+        let job: [String: Any] = ["Label": "fyi.joeydavid.agent-island", "RunAtLoad": true,
+                                  "ProgramArguments": ["/usr/bin/open", "-a", Bundle.main.bundlePath]]
+        guard let data = try? PropertyListSerialization.data(fromPropertyList: job, format: .xml, options: 0),
+              (try? Data(contentsOf: plist)) != data else { return }
+        try? FileManager.default.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: plist, options: .atomic)
     }
 }

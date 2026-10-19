@@ -104,8 +104,11 @@ final class SessionStore {
 
         let s = sessions[key] ?? Session(agent: agent, id: sid, pid: pid)
         sessions[key] = s
-        if pid > 1 { s.pid = pid; watchExit(pid) }
         s.cwd = p["cwd"] as? String ?? msg["cwd"] as? String ?? s.cwd
+        if pid > 1 {
+            if Procs.isSharedDaemon(pid) { adoptClient(s) } else { s.pid = pid }
+            watchExit(s.pid)
+        }
         s.tty = msg["tty"] as? String ?? s.tty
         s.term = msg["term"] as? String ?? s.term
         s.bundle = msg["bundle"] as? String ?? s.bundle
@@ -225,6 +228,23 @@ final class SessionStore {
         pending.removeAll { $0.session === s }
     }
 
+    /// Ties a daemon-hosted session to the terminal `codex` it lives in, so closing the tab ends it.
+    /// Prefers an unclaimed client in the same directory, newest first; one session per client.
+    private func adoptClient(_ s: Session) {
+        if s.pid > 1, !Procs.isSharedDaemon(s.pid), kill(s.pid, 0) == 0 { return }
+        let clients = Procs.codexClients()
+        guard !clients.isEmpty else { return }
+        let claimed = Set(sessions.values.filter { $0 !== s }.map(\.pid))
+        let free = clients.filter { !claimed.contains($0.pid) }
+        let pool = free.isEmpty ? clients : free
+        let here = pool.filter { Focus.same(Procs.cwd($0.pid), s.cwd) }
+        guard let c = (here.isEmpty ? pool : here).max(by: { $0.start < $1.start }) else { return }
+        // A client shows one thread at a time; whichever had it before is gone (e.g. after /new).
+        for (k, o) in sessions where o !== s && o.agent == s.agent && o.pid == c.pid { remove(k) }
+        s.pid = c.pid
+        if let name = devname(c.tty, S_IFCHR) { s.tty = String(cString: name) }
+    }
+
     private func watchExit(_ pid: Int32) {
         guard exits[pid] == nil else { return }
         guard kill(pid, 0) == 0 || errno == EPERM else { return processExited(pid) }
@@ -276,8 +296,13 @@ final class SessionStore {
             // Whatever it was doing, we missed it; the next event corrects this.
             if s.state != .done { s.state = .idle }
             sessions[s.key] = s
-            watchExit(s.pid)
         }
+        // Daemon-hosted sessions from before: keep only those whose terminal client still runs.
+        for s in sessions.values where Procs.isSharedDaemon(s.pid) {
+            adoptClient(s)
+            if Procs.isSharedDaemon(s.pid) { sessions.removeValue(forKey: s.key) }
+        }
+        for s in sessions.values { watchExit(s.pid) }
     }
 
     // MARK: debugging

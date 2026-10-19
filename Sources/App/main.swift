@@ -10,7 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         config = ConfigStore()
         store = SessionStore(config: config)
-        island = IslandController(store: store, config: config)
+        let stage = CommandLine.arguments.contains("--stage")
+        island = IslandController(store: store, config: config, stage: stage)
+        if !stage && Bundle.main.bundlePath.contains("/Applications/") { LoginItem.sync(config.config.launchAtLogin ?? true) }
         menu = MenuController(config: config, store: store)
         menu.open = { [unowned self] s in self.island.openChat(s) }
         island.menu = { [unowned self] in self.menu.makeMenu() }

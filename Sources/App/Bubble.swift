@@ -95,7 +95,8 @@ private func spacer() -> NSView {
     return v
 }
 
-/// The question panel hanging from the island: AskUserQuestion choices or a permission prompt.
+/// The question panel dropped from the widened island: AskUserQuestion choices or a permission prompt.
+/// Compact rows — keycap, label, dim description on one line — in the island's own black.
 final class BubbleView: NSView, NSTextFieldDelegate {
     let pending: Pending
     var onAnswer: ((String) -> Void)?
@@ -103,24 +104,22 @@ final class BubbleView: NSView, NSTextFieldDelegate {
     var onResize: (() -> Void)?
 
     private let agent: AgentConfig
-    private let sprite: Sprite
     private var index = 0
     private var answers: [String: String] = [:]
     private var picked = Set<Int>()
     private let stack = NSStackView()
     let width: CGFloat
-    private let insetH: CGFloat = 18, insetTop: CGFloat = 12, insetBottom: CGFloat = 16
+    private let insetH: CGFloat = 14, insetTop: CGFloat = 8, insetBottom: CGFloat = 12
     private var inner: CGFloat { width - 2 * insetH }
 
-    init(pending: Pending, agent: AgentConfig, sprite: Sprite, width: CGFloat = 400) {
+    init(pending: Pending, agent: AgentConfig, sprite: Sprite, width: CGFloat = 380) {
         self.width = width
         self.pending = pending
         self.agent = agent
-        self.sprite = sprite
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: 100))
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 6
+        stack.spacing = 4
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
@@ -138,78 +137,77 @@ final class BubbleView: NSView, NSTextFieldDelegate {
         return CGSize(width: width, height: ceil(stack.fittingSize.height + insetTop + insetBottom))
     }
 
-    private func add(_ v: NSView, full: Bool = false, after: CGFloat? = nil) {
+    private func add(_ v: NSView, full: Bool = true, after: CGFloat? = nil) {
         stack.addArrangedSubview(v)
         if full { v.widthAnchor.constraint(equalToConstant: inner).isActive = true }
         if let after { stack.setCustomSpacing(after, after: v) }
     }
+
+    private var dim: NSColor { NSColor(white: 1, alpha: 0.42) }
 
     private func rebuild() {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         switch pending.kind {
         case .ask(let qs, _):
             let q = qs[index]
-            add(header(chip: q.header, step: qs.count > 1 ? "\(index + 1)/\(qs.count)" : nil), full: true, after: 10)
-            add(label(q.text, 14, .semibold, wrap: inner), after: 10)
-            for (i, o) in q.options.enumerated() { add(option(i, o, multi: q.multi), full: true) }
-            add(otherField(), full: true, after: 10)
-            let chat = textButton("Open chat") { [weak self] in self?.onChat?() }
-            if q.multi {
-                add(row([chat, spacer(), accentButton("Submit") { [weak self] in self?.submitPicked() }]), full: true)
-            } else {
-                add(row([chat, spacer()]), full: true)
-            }
+            var title: [NSView] = [label(q.text, 13, .semibold, wrap: inner - 70), spacer()]
+            if qs.count > 1 { title.append(label("\(index + 1)/\(qs.count)", 10.5, .medium, dim, mono: true)) }
+            if !q.header.isEmpty { title.append(chip(q.header)) }
+            add(row(title), after: 8)
+            for (i, o) in q.options.enumerated() { add(option(i, o, multi: q.multi)) }
+            stack.setCustomSpacing(6, after: stack.arrangedSubviews.last!)
+            add(otherField(), after: 8)
+            var foot: [NSView] = [textButton("Open chat") { [weak self] in self?.onChat?() }, spacer()]
+            if q.multi { foot.append(pill("Submit", accent: true) { [weak self] in self?.submitPicked() }) }
+            add(row(foot))
         case .permission(let tool, let summary):
-            add(header(chip: "Permission", step: nil), full: true, after: 10)
-            add(label("Allow \(tool)?", 14, .semibold, wrap: inner), after: 8)
+            let head = row([label("Allow \(tool)?", 13, .semibold), spacer(), chip("Permission")])
+            add(head, after: 8)
             if !summary.isEmpty {
                 let code = HoverButton(normal: NSColor(white: 1, alpha: 0.06), hot: NSColor(white: 1, alpha: 0.06), radius: 8)
-                let t = label(String(summary.prefix(600)), 11, .regular, NSColor(white: 1, alpha: 0.82), mono: true, wrap: inner - 20)
-                t.maximumNumberOfLines = 6
-                code.fill(t)
-                add(code, full: true, after: 12)
+                let t = label(String(summary.prefix(600)), 11, .regular, NSColor(white: 1, alpha: 0.8), mono: true, wrap: inner - 20)
+                t.maximumNumberOfLines = 4
+                code.fill(t, h: 10, v: 7)
+                add(code, after: 10)
             }
-            let deny = HoverButton(normal: NSColor(white: 1, alpha: 0.1), hot: NSColor(white: 1, alpha: 0.18), radius: 8)
-            deny.fill(label("Deny", 13, .medium), h: 16, v: 6)
-            deny.onClick = { [weak self] in self.map { $0.onAnswer?($0.pending.output(allow: false)) } }
-            let allow = accentButton("Allow") { [weak self] in self.map { $0.onAnswer?($0.pending.output(allow: true)) } }
-            add(row([textButton("Open chat") { [weak self] in self?.onChat?() }, spacer(), deny, allow], spacing: 8), full: true)
+            add(row([textButton("Open chat") { [weak self] in self?.onChat?() }, spacer(),
+                     pill("Deny", accent: false) { [weak self] in self.map { $0.onAnswer?($0.pending.output(allow: false)) } },
+                     pill("Allow", accent: true) { [weak self] in self.map { $0.onAnswer?($0.pending.output(allow: true)) } }], spacing: 6))
         }
     }
 
-    private func header(chip: String, step: String?) -> NSView {
-        // The widened island above already names the agent; just say where this comes from.
-        var views: [NSView] = [label(pending.session.project, 11, .medium, NSColor(white: 1, alpha: 0.45)), spacer()]
-        if let step { views.append(label(step, 11, .medium, NSColor(white: 1, alpha: 0.45))) }
-        if !chip.isEmpty {
-            let c = HoverButton(normal: NSColor(white: 1, alpha: 0.1), hot: NSColor(white: 1, alpha: 0.1), radius: 6)
-            c.fill(label(chip.uppercased(), 9, .bold, NSColor(white: 1, alpha: 0.7)), h: 6, v: 2)
-            c.setContentHuggingPriority(.required, for: .horizontal)
-            (c.subviews.first as? NSTextField)?.setContentHuggingPriority(.required, for: .horizontal)
-            views.append(c)
-        }
-        return row(views)
+    private func chip(_ text: String) -> NSView {
+        let c = HoverButton(normal: agent.tint.withAlphaComponent(0.16), hot: agent.tint.withAlphaComponent(0.16), radius: 5)
+        let t = label(text.uppercased(), 9, .bold, agent.tint.blended(withFraction: 0.35, of: .white) ?? agent.tint)
+        c.fill(t, h: 6, v: 2)
+        c.widthAnchor.constraint(equalTo: t.widthAnchor, constant: 12).isActive = true
+        return c
     }
 
     private func option(_ i: Int, _ o: (label: String, detail: String), multi: Bool) -> NSView {
         let on = picked.contains(i)
-        let b = HoverButton(normal: NSColor(white: 1, alpha: on ? 0.16 : 0.07), hot: NSColor(white: 1, alpha: 0.15))
-        let key = HoverButton(normal: on ? agent.tint.withAlphaComponent(0.9) : NSColor(white: 1, alpha: 0.12),
-                              hot: on ? agent.tint : NSColor(white: 1, alpha: 0.12), radius: 5)
-        let keyText = label(multi ? (on ? "✓" : "") : "\(i + 1)", 10, .semibold, on ? .black : NSColor(white: 1, alpha: 0.7), mono: true)
-        keyText.alignment = .center
-        key.addSubview(keyText)
-        NSLayoutConstraint.activate([key.widthAnchor.constraint(equalToConstant: 18), key.heightAnchor.constraint(equalToConstant: 18),
-                                     keyText.centerXAnchor.constraint(equalTo: key.centerXAnchor),
-                                     keyText.centerYAnchor.constraint(equalTo: key.centerYAnchor)])
-        let text = NSStackView(views: [label(o.label, 13, .medium, wrap: inner - 50)])
-        text.orientation = .vertical
-        text.alignment = .leading
-        text.spacing = 1
-        if !o.detail.isEmpty { text.addArrangedSubview(label(o.detail, 11, .regular, NSColor(white: 1, alpha: 0.5), wrap: inner - 50)) }
-        let content = row([key, text], spacing: 10)
-        content.alignment = .top
-        b.fill(content)
+        let b = HoverButton(normal: on ? agent.tint.withAlphaComponent(0.2) : NSColor(white: 1, alpha: 0.055),
+                            hot: agent.tint.withAlphaComponent(on ? 0.26 : 0.16), radius: 8)
+        let key = NSView()
+        key.wantsLayer = true
+        key.layer?.cornerRadius = 4
+        key.layer?.backgroundColor = (on ? agent.tint : NSColor(white: 1, alpha: 0.1)).cgColor
+        key.translatesAutoresizingMaskIntoConstraints = false
+        let k = label(multi ? (on ? "✓" : "") : "\(i + 1)", 9.5, .bold, on ? .black : NSColor(white: 1, alpha: 0.65), mono: true)
+        k.alignment = .center
+        key.addSubview(k)
+        NSLayoutConstraint.activate([key.widthAnchor.constraint(equalToConstant: 16), key.heightAnchor.constraint(equalToConstant: 16),
+                                     k.centerXAnchor.constraint(equalTo: key.centerXAnchor), k.centerYAnchor.constraint(equalTo: key.centerYAnchor)])
+        let title = label(o.label, 12.5, .medium)
+        title.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        var parts: [NSView] = [key, title]
+        if !o.detail.isEmpty {
+            let d = label(o.detail, 11, .regular, dim)
+            d.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            parts.append(d)
+        }
+        parts.append(spacer())
+        b.fill(row(parts, spacing: 8), h: 8, v: 6)
         b.onClick = { [weak self] in
             guard let self else { return }
             if multi {
@@ -223,22 +221,29 @@ final class BubbleView: NSView, NSTextFieldDelegate {
     }
 
     private func otherField() -> NSView {
-        let box = HoverButton(normal: NSColor(white: 1, alpha: 0.05), hot: NSColor(white: 1, alpha: 0.08))
+        let box = HoverButton(normal: NSColor(white: 1, alpha: 0.03), hot: NSColor(white: 1, alpha: 0.06), radius: 8)
+        box.wantsLayer = true
+        box.layer?.borderWidth = 1
+        box.layer?.borderColor = NSColor(white: 1, alpha: 0.08).cgColor
         let f = NSTextField()
         f.placeholderAttributedString = NSAttributedString(string: "Something else…", attributes: [
-            .foregroundColor: NSColor(white: 1, alpha: 0.35), .font: NSFont.systemFont(ofSize: 13)])
-        f.font = .systemFont(ofSize: 13)
+            .foregroundColor: NSColor(white: 1, alpha: 0.3), .font: NSFont.systemFont(ofSize: 12)])
+        f.font = .systemFont(ofSize: 12)
         f.textColor = .white
         f.isBordered = false
         f.drawsBackground = false
         f.focusRingType = .none
         f.delegate = self
         f.translatesAutoresizingMaskIntoConstraints = false
+        let ret = label("↩", 11, .medium, NSColor(white: 1, alpha: 0.25))
         box.addSubview(f)
+        box.addSubview(ret)
         NSLayoutConstraint.activate([f.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 10),
-                                     f.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -10),
-                                     f.topAnchor.constraint(equalTo: box.topAnchor, constant: 7),
-                                     f.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -7)])
+                                     f.trailingAnchor.constraint(equalTo: ret.leadingAnchor, constant: -6),
+                                     ret.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -10),
+                                     ret.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+                                     f.topAnchor.constraint(equalTo: box.topAnchor, constant: 5),
+                                     f.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -5)])
         box.onClick = { [weak f] in f?.window?.makeKey(); f?.window?.makeFirstResponder(f) }
         return box
     }
@@ -251,18 +256,19 @@ final class BubbleView: NSView, NSTextFieldDelegate {
     }
 
     private func textButton(_ title: String, _ action: @escaping () -> Void) -> NSView {
-        let b = HoverButton(normal: .clear, hot: NSColor(white: 1, alpha: 0.08), radius: 7)
-        let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.up.forward.app", accessibilityDescription: nil) ?? NSImage())
-        icon.contentTintColor = NSColor(white: 1, alpha: 0.5)
-        icon.symbolConfiguration = .init(pointSize: 11, weight: .medium)
-        b.fill(row([icon, label(title, 11, .medium, NSColor(white: 1, alpha: 0.5))], spacing: 4), h: 6, v: 4)
+        let b = HoverButton(normal: .clear, hot: NSColor(white: 1, alpha: 0.08), radius: 6)
+        let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.up.forward", accessibilityDescription: nil) ?? NSImage())
+        icon.contentTintColor = dim
+        icon.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
+        b.fill(row([label(title, 11, .medium, dim), icon], spacing: 3), h: 6, v: 3)
         b.onClick = action
         return b
     }
 
-    private func accentButton(_ title: String, _ action: @escaping () -> Void) -> NSView {
-        let b = HoverButton(normal: agent.tint.withAlphaComponent(0.88), hot: agent.tint, radius: 8)
-        b.fill(label(title, 13, .semibold, .black), h: 16, v: 6)
+    private func pill(_ title: String, accent: Bool, _ action: @escaping () -> Void) -> NSView {
+        let b = accent ? HoverButton(normal: agent.tint.withAlphaComponent(0.9), hot: agent.tint, radius: 7)
+                       : HoverButton(normal: NSColor(white: 1, alpha: 0.1), hot: NSColor(white: 1, alpha: 0.17), radius: 7)
+        b.fill(label(title, 12, .semibold, accent ? .black : .white), h: 13, v: 4)
         b.onClick = action
         return b
     }
