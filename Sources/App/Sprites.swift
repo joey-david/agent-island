@@ -107,7 +107,7 @@ enum SpriteLibrary {
 /// Codex v2 pet atlases: 8×11 cells of 192×208, rows per state.
 enum PetAtlas {
     private static let rows: [(row: Int, ms: [Double])] = [
-        (0, [280, 110, 110, 140, 140, 320]),          // idle
+        (0, [1200, 110, 110, 140, 140, 700]),        // idle, resting longer between fidgets
         (4, [140, 140, 140, 140, 280]),               // jumping
         (6, [150, 150, 150, 150, 150, 260]),          // waiting
         (7, [120, 120, 120, 120, 120, 220]),          // running
@@ -166,7 +166,7 @@ enum PetAtlas {
             for (anim, r) in map where r == row { anims[anim] = seq }
         }
         guard let strip = out.makeImage() else { return nil }
-        return Sprite(image: strip, frameCount: total, pixelated: false, tempo: 1.6, anims: anims)
+        return Sprite(image: strip, frameCount: total, pixelated: false, tempo: 2.2, anims: anims)
     }
 }
 
