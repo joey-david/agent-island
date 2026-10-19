@@ -115,7 +115,39 @@ enum PetAtlas {
     private static let map: [Anim: Int] = [.idle: 0, .done: 4, .question: 6, .working: 7]
     static let height = 96
 
+    /// Prepared strips are cached as small PNGs, so later launches skip decoding the full atlas.
+    private static func cacheURL(_ url: URL) -> URL {
+        let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)?.timeIntervalSince1970 ?? 0
+        let name = url.deletingPathExtension().lastPathComponent + "-\(Int(mtime))-h\(height)-v1.png"
+        return islandHome.appendingPathComponent("cache").appendingPathComponent(name)
+    }
+
+    private static func sprite(_ strip: CGImage) -> Sprite {
+        var anims: [Anim: [(frame: Int, ms: Double)]] = [:]
+        var i = 0
+        for (row, ms) in rows {
+            let seq = ms.enumerated().map { (frame: i + $0.offset, ms: $0.element) }
+            i += ms.count
+            for (anim, r) in map where r == row { anims[anim] = seq }
+        }
+        return Sprite(image: strip, frameCount: i, pixelated: false, tempo: 2.2, anims: anims)
+    }
+
     static func load(_ url: URL) -> Sprite? {
+        let cached = cacheURL(url)
+        if let src = CGImageSourceCreateWithURL(cached as CFURL, nil), let strip = CGImageSourceCreateImageAtIndex(src, 0, nil) {
+            return sprite(strip)
+        }
+        guard let strip = prepare(url) else { return nil }
+        try? FileManager.default.createDirectory(at: cached.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let dest = CGImageDestinationCreateWithURL(cached as CFURL, "public.png" as CFString, 1, nil) {
+            CGImageDestinationAddImage(dest, strip, nil)
+            CGImageDestinationFinalize(dest)
+        }
+        return sprite(strip)
+    }
+
+    private static func prepare(_ url: URL) -> CGImage? {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
               let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
         let W = img.width, H = img.height
@@ -165,8 +197,7 @@ enum PetAtlas {
             }
             for (anim, r) in map where r == row { anims[anim] = seq }
         }
-        guard let strip = out.makeImage() else { return nil }
-        return Sprite(image: strip, frameCount: total, pixelated: false, tempo: 2.2, anims: anims)
+        return out.makeImage()
     }
 }
 

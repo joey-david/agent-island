@@ -65,6 +65,13 @@ final class IslandController: NSObject {
     private var trayRects: [Side: CGRect] = [:]
     private var notch = CGRect.zero
     private var height: CGFloat = 520
+    /// The island draws on a fixed 520pt canvas pinned to the top of the window; the window itself
+    /// stays a notch-high strip and only grows while a question panel is open, so the compositor
+    /// isn't blending a big transparent sheet over whatever is underneath.
+    private let holder = NSView()
+    private var screenTop: CGFloat = 0, screenX: CGFloat = 0, screenW: CGFloat = 0
+    private var windowTall = true
+    private var shrinkToken = 0
     /// Demo mode: draws its own wallpaper, menu bar and notch in an ordinary window, for recordings.
     private let stage: Bool
     private let backdrop = CALayer(), notchCover = CAShapeLayer()
@@ -98,7 +105,8 @@ final class IslandController: NSObject {
         self.config = config
         self.stage = stage
         super.init()
-        window.contentView = view
+        window.contentView = holder
+        holder.addSubview(view)
         window.acceptsMouseMovedEvents = true
         view.controller = self
         view.wantsLayer = true
@@ -143,16 +151,28 @@ final class IslandController: NSObject {
             nx = l.maxX - origin
             nw = r.minX - l.maxX
         }
-        window.setFrame(NSRect(x: f.minX, y: f.maxY - top, width: f.width, height: height), display: false)
+        screenTop = f.maxY
+        screenX = f.minX
+        screenW = f.width
+        view.frame = NSRect(x: 0, y: 0, width: f.width, height: height)
         host.frame = view.bounds
         for l in [root, slotLayer, mask] { l.frame = view.bounds }
         for l in [root, bar, barMask, panel, slotLayer] + Array(trays.values) + Array(trayMasks.values) {
             l.contentsScale = screen.backingScaleFactor
         }
         notch = CGRect(x: nx, y: top - nh, width: nw, height: nh)
+        fitWindow(tall: store.pending.first != nil)
         for s in slots.values { s.layer.removeFromSuperlayer() }
         slots.removeAll()
         collapse()
+    }
+
+    private func fitWindow(tall: Bool) {
+        guard !stage else { return }
+        let h = tall ? height : notch.height + overscan + 10
+        windowTall = tall
+        window.setFrame(NSRect(x: screenX, y: screenTop + overscan - h, width: screenW, height: h), display: false)
+        view.setFrameOrigin(NSPoint(x: 0, y: h - height))
     }
 
     private func layoutStage() {
@@ -161,6 +181,7 @@ final class IslandController: NSObject {
         height = 440
         let f = screen.frame
         window.setFrame(NSRect(x: f.midX - W / 2, y: f.midY - height / 2, width: W, height: height), display: false)
+        view.frame = NSRect(x: 0, y: 0, width: W, height: height)
         host.frame = view.bounds
         for l in [root, slotLayer, mask, backdrop] { l.frame = view.bounds }
         for l in [root, bar, barMask, panel, slotLayer, notchCover] + Array(trays.values) + Array(trayMasks.values) {
@@ -257,6 +278,16 @@ final class IslandController: NSObject {
         }
         let pending = store.pending.first
         let show = !sides[.left]!.isEmpty || !sides[.right]!.isEmpty || pending != nil
+        if pending != nil, !windowTall {
+            fitWindow(tall: true)
+        } else if pending == nil, windowTall {
+            shrinkToken += 1
+            let token = shrinkToken
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+                guard let self, token == self.shrinkToken, self.store.pending.isEmpty else { return }
+                self.fitWindow(tall: false)
+            }
+        }
         if show && !visible {
             visible = true
             collapse()
@@ -446,7 +477,7 @@ final class IslandController: NSObject {
             pulse.duration = 0.8
             pulse.autoreverses = true
             pulse.repeatCount = .infinity
-            pulse.preferredFrameRateRange = CAFrameRateRange(minimum: 10, maximum: 30, preferred: 24)
+            pulse.preferredFrameRateRange = CAFrameRateRange(minimum: 8, maximum: 15, preferred: 15)
             slot.dot.add(pulse, forKey: "pulse")
         case .done:
             slot.dot.backgroundColor = NSColor.systemGreen.cgColor
@@ -470,10 +501,14 @@ final class IslandController: NSObject {
         l.removeAnimation(forKey: "frames")
         l.removeAnimation(forKey: "once")
         guard let anim = slot.anim else { return }
-        if anim == .done {
-            l.add(track(s, .idle, repeats: .infinity), forKey: "frames")
+        // Idle fidgets a few times, then holds still on its first frame: resting mascots cost nothing.
+        switch anim {
+        case .done:
+            l.add(track(s, .idle, repeats: 3), forKey: "frames")
             l.add(track(s, .done, repeats: 2), forKey: "once")
-        } else {
+        case .idle:
+            l.add(track(s, .idle, repeats: 2), forKey: "frames")
+        default:
             l.add(track(s, anim, repeats: .infinity), forKey: "frames")
         }
     }
@@ -490,7 +525,7 @@ final class IslandController: NSObject {
         k.calculationMode = .discrete
         k.duration = total / 1000 * s.tempo
         k.repeatCount = repeats
-        k.preferredFrameRateRange = CAFrameRateRange(minimum: 8, maximum: 30, preferred: 15)
+        k.preferredFrameRateRange = CAFrameRateRange(minimum: 4, maximum: 12, preferred: 10)  // frames hold ≥110ms
         return k
     }
 
