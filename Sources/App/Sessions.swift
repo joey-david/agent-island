@@ -81,6 +81,50 @@ final class SessionStore {
     init(config: ConfigStore) {
         self.config = config
         restore()
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
+                                                          object: nil, queue: .main) { [weak self] _ in self?.checkFocus() }
+    }
+
+    // MARK: read receipts
+
+    /// Finished work counts as read once you look at it: its Ghostty tab focused, or its app in front.
+    /// Ghostty tab switches raise no event, so while something is unread and Ghostty is frontmost
+    /// we glance at the focused tab once a second; otherwise nothing runs.
+    private var focusTimer: DispatchSourceTimer?
+    private var unread: [Session] { sessions.values.filter { $0.state == .done && !$0.seen } }
+
+    private func updateFocusTimer() {
+        let need = !unread.isEmpty && NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Focus.ghostty
+        if need, focusTimer == nil {
+            let t = DispatchSource.makeTimerSource(queue: .main)
+            t.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(300))
+            t.setEventHandler { [weak self] in self?.checkFocus() }
+            t.resume()
+            focusTimer = t
+        } else if !need {
+            focusTimer?.cancel()
+            focusTimer = nil
+        }
+    }
+
+    private func checkFocus() {
+        defer { updateFocusTimer() }
+        guard !unread.isEmpty, let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return }
+        if front == Focus.ghostty {
+            Focus.focusedTerminal { [weak self] id, wd in
+                guard let self else { return }
+                var hit = false
+                for s in self.unread where s.inGhostty {
+                    let mine = s.terminalID.map { $0 == id } ?? Focus.same(wd, s.cwd)
+                    if mine { s.seen = true; hit = true }
+                }
+                if hit { self.changed() }
+            }
+        } else {
+            var hit = false
+            for s in unread where !s.inGhostty && (s.bundle == front || config.agent(s.agent)?.app == front) { s.seen = true; hit = true }
+            if hit { changed() }
+        }
     }
 
     // MARK: events
@@ -262,6 +306,7 @@ final class SessionStore {
 
     private func changed() {
         scheduleLinger()
+        updateFocusTimer()
         onChange?()
         guard !saveQueued else { return }
         saveQueued = true

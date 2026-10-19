@@ -23,7 +23,7 @@ enum Focus {
 
     private static var ghosttyFront: Bool { NSWorkspace.shared.frontmostApplication?.bundleIdentifier == ghostty }
 
-    private static func focusedTerminal(_ done: @escaping (_ id: String?, _ cwd: String?) -> Void) {
+    static func focusedTerminal(_ done: @escaping (_ id: String?, _ cwd: String?) -> Void) {
         queue.async {
             let r = run("tell application \"Ghostty\" to get {id, working directory} of focused terminal of selected tab of front window")
             let id = r?.atIndex(1)?.stringValue, wd = r?.atIndex(2)?.stringValue
