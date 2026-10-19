@@ -67,6 +67,8 @@ final class TrayView: NSView {
         let states: [AgentState]
         let keys: [String]
         let selected: Int
+        /// Picked with the arrow keys.
+        let focused: Bool
     }
 
     /// Clickable session pips, in this view's coordinates.
@@ -87,6 +89,14 @@ final class TrayView: NSView {
         for (i, r) in rows.enumerated() {
             var seg = Self.segment(i, side: side, in: frame)
             seg.origin.x -= frame.minX
+            if r.focused {
+                let hl = NSView(frame: seg.insetBy(dx: 2, dy: 3))
+                hl.wantsLayer = true
+                hl.layer?.cornerRadius = 9
+                hl.layer?.cornerCurve = .continuous
+                hl.layer?.backgroundColor = NSColor(white: 1, alpha: 0.09).cgColor
+                addSubview(hl)
+            }
             let textX0 = left ? seg.minX + Self.edge + Self.iconW + 10 : seg.minX + 30
             let textX1 = left ? seg.maxX - 30 : seg.maxX - Self.edge - Self.iconW - 10
             let tw = textX1 - textX0
@@ -98,12 +108,12 @@ final class TrayView: NSView {
             var pieces: [NSView] = [name]
             if r.states.count > 1 {
                 let n = min(r.states.count, 6)
-                let box = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(n) * 9 - 3, height: 6))
+                let box = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(n) * 12 - 4, height: 8))
                 box.wantsLayer = true
                 for i in 0..<n {
                     let d = CALayer()
-                    d.frame = CGRect(x: CGFloat(left ? i : n - 1 - i) * 9, y: 0, width: 6, height: 6)
-                    d.cornerRadius = 3
+                    d.frame = CGRect(x: CGFloat(left ? i : n - 1 - i) * 12, y: 0, width: 8, height: 8)
+                    d.cornerRadius = 4
                     d.backgroundColor = IslandController.color(r.states[i], tint: r.agent.tint).cgColor
                     d.opacity = i == r.selected ? 1 : 0.55
                     if i == r.selected { d.borderWidth = 1.2; d.borderColor = NSColor(white: 1, alpha: 0.9).cgColor }
@@ -128,8 +138,8 @@ final class TrayView: NSView {
                 if v.identifier?.rawValue == "pips" {
                     let n = min(r.states.count, 6)
                     for i in 0..<n {
-                        let px = v.frame.minX + CGFloat(left ? i : n - 1 - i) * 9
-                        pips.append((CGRect(x: px - 2, y: 0, width: 10, height: h), r.keys[i]))
+                        let px = v.frame.minX + CGFloat(left ? i : n - 1 - i) * 12
+                        pips.append((CGRect(x: px - 2, y: 0, width: 12, height: h), r.keys[i]))
                     }
                 }
                 x += left ? w + 7 : -7

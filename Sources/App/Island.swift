@@ -32,6 +32,8 @@ final class IslandView: NSView {
     override func rightMouseDown(with e: NSEvent) { controller?.showMenu(e, in: self) }
     override func mouseEntered(with e: NSEvent) { controller?.pointerMoved() }
     override func mouseExited(with e: NSEvent) { controller?.pointerMoved() }
+    override var acceptsFirstResponder: Bool { true }
+    override func keyDown(with e: NSEvent) { if controller?.key(e) != true { super.keyDown(with: e) } }
 }
 
 private final class Slot {
@@ -41,7 +43,6 @@ private final class Slot {
     var sprite: Sprite
     var anim: Anim?
     var dotState: AgentState?
-    var pips: [CALayer] = []
     var leaving = false
     init(id: String, sprite: Sprite) { self.id = id; self.sprite = sprite }
 }
@@ -70,6 +71,9 @@ final class IslandController: NSObject {
     /// Session previewed in the tray per agent (hovering its pip), and where those pips are.
     private var selected: [String: String] = [:]
     private var pipHits: [(rect: CGRect, key: String)] = []
+    /// Agent picked with the arrow keys while a tray is open, and the app to hand keys back to.
+    private var keyFocus: String?
+    private var keyOwner: NSRunningApplication?
     private var dropped: Pending?
     private var tray: TrayView?
     private var trayKey = ""
@@ -78,7 +82,7 @@ final class IslandController: NSObject {
     private let config: ConfigStore
     var menu: (() -> NSMenu)?
 
-    private let pad: CGFloat = 12, gap: CGFloat = 10
+    private let pad: CGFloat = 12, gap: CGFloat = 10, stackStep: CGFloat = 11, maxStack = 4
     private var bodyH: CGFloat { (notch.height * 0.56).rounded() }
     private var top: CGFloat { height }
 
@@ -186,13 +190,15 @@ final class IslandController: NSObject {
         for side in [Side.left, .right] {
             let dir: CGFloat = side == .left ? -1 : 1
             var x = side == .left ? notch.minX - pad : notch.maxX + pad
-            for (a, _) in sides[side]! {
+            for (a, sum) in sides[side]! {
                 let sp = SpriteLibrary.sprite(for: a)
                 let w = (bodyH * sp.weight * sp.bodyAspect).rounded()
+                // Extra sessions tuck in behind the front mascot, a few points each.
+                let gw = w + CGFloat(min(sum.count, maxStack) - 1) * stackStep
                 let cx = x + dir * w / 2
                 targets[a.id] = (CGPoint(x: cx, y: cy), 1)
-                hits[a.id] = CGRect(x: cx - w / 2 - gap / 2, y: notch.minY, width: w + gap, height: notch.height)
-                x += dir * (w + gap)
+                hits[a.id] = CGRect(x: min(x, x + dir * gw) - gap / 2, y: notch.minY, width: gw + gap, height: notch.height)
+                x += dir * (gw + gap)
             }
             edges[side] = sides[side]!.isEmpty ? (side == .left ? notch.minX : notch.maxX) : x - dir * gap + dir * pad
         }
@@ -258,28 +264,39 @@ final class IslandController: NSObject {
             set(panel, notchPath, animated: animated)
         }
 
+        // One mascot per session: the most urgent (or previewed) in front, the rest stacked behind it.
         var live = Set<String>()
         for side in [Side.left, .right] {
-            for (a, summary) in sides[side]! {
-                live.insert(a.id)
+            let dir: CGFloat = side == .left ? -1 : 1
+            for (a, _) in sides[side]! {
                 let t = targets[a.id]!
                 let sprite = SpriteLibrary.sprite(for: a)
-                let slot: Slot
-                if let s = slots[a.id], !s.leaving {
-                    slot = s
-                    if slot.sprite !== sprite { slot.sprite = sprite; dress(slot); slot.anim = nil }
-                } else {
-                    slots[a.id]?.layer.removeFromSuperlayer()
-                    slot = Slot(id: a.id, sprite: sprite)
-                    dress(slot)
-                    slot.layer.position = behindNotch(sprite, left: side == .left)
-                    slotLayer.addSublayer(slot.layer)
-                    slots[a.id] = slot
+                var ss = Array(store.sessions(of: a.id))
+                if let k = selected[a.id], let i = ss.firstIndex(where: { $0.key == k }) { ss.insert(ss.remove(at: i), at: 0) }
+                for (k, s) in ss.prefix(maxStack).enumerated() {
+                    live.insert(s.key)
+                    let slot: Slot
+                    if let old = slots[s.key], !old.leaving {
+                        slot = old
+                        if slot.sprite !== sprite { slot.sprite = sprite; dress(slot); slot.anim = nil }
+                    } else {
+                        slots[s.key]?.layer.removeFromSuperlayer()
+                        slot = Slot(id: s.key, sprite: sprite)
+                        dress(slot)
+                        slot.layer.position = behindNotch(sprite, left: side == .left)
+                        slotLayer.addSublayer(slot.layer)
+                        slots[s.key] = slot
+                    }
+                    let back = CGFloat(k)
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    slot.layer.zPosition = -back
+                    CATransaction.commit()
+                    fade(slot.layer, to: k == 0 ? 1 : Float(max(0.22, 0.55 - 0.15 * back)), animated: animated)
+                    move(slot.layer, to: CGPoint(x: t.center.x + dir * back * stackStep * t.scale, y: t.center.y), animated: animated)
+                    scale(slot.layer, to: t.scale * (k == 0 ? 1 : 0.8), animated: animated)
+                    apply(slot, store.displayState(s), front: k == 0)
                 }
-                move(slot.layer, to: t.center, animated: animated)
-                scale(slot.layer, to: t.scale, animated: animated)
-                apply(slot, summary)
-                for p in slot.pips { p.isHidden = side == openSide }
             }
         }
         for (id, slot) in slots where !live.contains(id) && !slot.leaving {
@@ -328,9 +345,9 @@ final class IslandController: NSObject {
         if slot.dot.superlayer == nil { l.addSublayer(slot.dot) }
     }
 
-    private func apply(_ slot: Slot, _ summary: AgentSummary) {
+    private func apply(_ slot: Slot, _ state: AgentState, front: Bool) {
         let anim: Anim
-        switch summary.state {
+        switch state {
         case .question: anim = .question
         case .working: anim = .working
         case .done: anim = .done
@@ -340,12 +357,11 @@ final class IslandController: NSObject {
             slot.anim = anim
             play(slot)
         }
-        layoutPips(slot, summary.states)
-        slot.dot.isHidden = summary.count > 1
-        guard slot.dotState != summary.state else { return }
-        slot.dotState = summary.state
+        slot.dot.isHidden = !front
+        guard slot.dotState != state else { return }
+        slot.dotState = state
         slot.dot.removeAllAnimations()
-        switch summary.state {
+        switch state {
         case .question:
             slot.dot.backgroundColor = NSColor.systemOrange.cgColor
             slot.dot.opacity = 1
@@ -372,44 +388,6 @@ final class IslandController: NSObject {
         case .done: return .systemGreen
         case .idle: return NSColor(white: 1, alpha: 0.28)
         }
-    }
-
-    /// Several sessions of one agent: a row of tiny pips under its mascot, no extra width.
-    private func layoutPips(_ slot: Slot, _ states: [AgentState]) {
-        let n = states.count > 1 ? min(states.count, 5) : 0
-        let tint = config.agent(slot.id)?.tint ?? .white
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        while slot.pips.count < n {
-            let p = CALayer()
-            p.cornerRadius = 1.25
-            slot.layer.addSublayer(p)
-            slot.pips.append(p)
-        }
-        while slot.pips.count > n { slot.pips.removeLast().removeFromSuperlayer() }
-        let b = slot.sprite.body, w = slot.layer.bounds.width, h = slot.layer.bounds.height
-        let step: CGFloat = 4.5, size: CGFloat = 2.5
-        let x0 = b.midX * w - CGFloat(n - 1) * step / 2
-        // Just above the island's bottom edge, clear of the mascot's feet.
-        let y = notch.minY + 3.5 - (notch.midY - (1 - b.midY) * h)
-        for (i, p) in slot.pips.enumerated() {
-            p.frame = CGRect(x: x0 + CGFloat(i) * step - size / 2, y: y - size / 2, width: size, height: size)
-            let c = Self.color(states[i], tint: tint).cgColor
-            if p.backgroundColor != c {
-                p.backgroundColor = c
-                p.removeAllAnimations()
-                if states[i] == .question {
-                    let pulse = CABasicAnimation(keyPath: "opacity")
-                    pulse.fromValue = 1
-                    pulse.toValue = 0.3
-                    pulse.duration = 0.8
-                    pulse.autoreverses = true
-                    pulse.repeatCount = .infinity
-                    p.add(pulse, forKey: "pulse")
-                }
-            }
-        }
-        CATransaction.commit()
     }
 
     private func play(_ slot: Slot) {
@@ -448,6 +426,8 @@ final class IslandController: NSObject {
             trayKey = ""
             pipHits = []
             selected = [:]
+            keyFocus = nil
+            releaseKeys()
             if let t = tray {
                 tray = nil
                 NSAnimationContext.runAnimationGroup({ $0.duration = 0.08; t.animator().alphaValue = 0 }, completionHandler: { t.removeFromSuperview() })
@@ -459,11 +439,11 @@ final class IslandController: NSObject {
             let i = ss.firstIndex { $0.key == selected[a.id] } ?? 0
             let s = ss.isEmpty ? nil : ss[i]
             return TrayView.Row(agent: a, state: s.map(store.displayState) ?? sum.state, session: s, usage: Usage.read(a.id),
-                                states: ss.map(store.displayState), keys: ss.map(\.key), selected: i)
+                                states: ss.map(store.displayState), keys: ss.map(\.key), selected: i, focused: keyFocus == a.id)
         }
         // Rebuild only when something visible changed.
         let key = "\(side)|\(r)|" + rows.map {
-            "\($0.agent.id)\($0.state)\($0.keys)\($0.states)\($0.selected)\($0.session?.action ?? "")\($0.session?.title ?? "")\($0.session?.prompt ?? "")\(Int($0.usage?.fiveHour ?? -1))"
+            "\($0.agent.id)\($0.state)\($0.keys)\($0.states)\($0.selected)\($0.focused)\($0.session?.action ?? "")\($0.session?.title ?? "")\($0.session?.prompt ?? "")\(Int($0.usage?.fiveHour ?? -1))"
         }.joined(separator: "|")
         guard key != trayKey else { return }
         let fresh = tray == nil || !trayKey.hasPrefix("\(side)|")
@@ -525,6 +505,20 @@ final class IslandController: NSObject {
         l.position = pos
         CATransaction.commit()
         if animated && from != pos { spring(l, "position", from: NSValue(point: from), to: NSValue(point: pos)) }
+    }
+
+    private func fade(_ l: CALayer, to o: Float, animated: Bool) {
+        let from = l.presentation()?.opacity ?? l.opacity
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        l.opacity = o
+        CATransaction.commit()
+        guard animated, abs(from - o) > 0.01 else { return }
+        let a = CABasicAnimation(keyPath: "opacity")
+        a.fromValue = from
+        a.toValue = o
+        a.duration = 0.25
+        l.add(a, forKey: "opacity")
     }
 
     private func scale(_ l: CALayer, to s: CGFloat, animated: Bool) {
@@ -591,6 +585,8 @@ final class IslandController: NSObject {
             if s != openSide {
                 openSide = s
                 selected = [:]
+                keyFocus = nil
+                takeKeys()
                 refreshTitles()
                 // Looking counts as reading: finished sessions on this side go quiet.
                 for a in config.config.agents where a.placement == s { store.markSeen(a.id) }
@@ -610,6 +606,61 @@ final class IslandController: NSObject {
             closeWork = w
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: w)
         }
+    }
+
+    // MARK: keyboard
+
+    /// While a tray is open the island takes the keyboard (without activating the app),
+    /// so ←/→ walk every session on that side, Return opens it, Esc closes.
+    private func takeKeys() {
+        guard !window.isKeyWindow else { return }
+        keyOwner = NSWorkspace.shared.frontmostApplication
+        window.makeKey()
+        window.makeFirstResponder(view)
+    }
+
+    private func releaseKeys() {
+        guard window.isKeyWindow, bubble == nil else { return }
+        window.resignKey()
+        keyOwner?.activate()
+        keyOwner = nil
+    }
+
+    /// The open side's sessions in on-screen left-to-right order.
+    private func visualOrder() -> [(agent: String, key: String)] {
+        guard let side = openSide else { return [] }
+        var agents = config.config.agents.filter { $0.placement == side && store.summary($0.id) != nil }
+        if side == .left { agents.reverse() }
+        return agents.flatMap { a -> [(agent: String, key: String)] in
+            let keys = store.sessions(of: a.id).prefix(6).map { (a.id, $0.key) }
+            return side == .left ? Array(keys) : keys.reversed()
+        }
+    }
+
+    func key(_ e: NSEvent) -> Bool {
+        guard openSide != nil else { return false }
+        switch e.keyCode {
+        case 123, 124: // ← →
+            let order = visualOrder()
+            guard !order.isEmpty else { return true }
+            let cur = keyFocus.flatMap { f in order.firstIndex { $0.agent == f && $0.key == (selected[f] ?? store.sessions(of: f).first?.key) } }
+            let next = cur.map { ($0 + (e.keyCode == 124 ? 1 : -1) + order.count) % order.count } ?? (e.keyCode == 124 ? 0 : order.count - 1)
+            keyFocus = order[next].agent
+            selected[order[next].agent] = order[next].key
+            render()
+        case 36, 76: // Return
+            let id = keyFocus ?? visualOrder().first?.agent
+            if let id {
+                let ss = store.sessions(of: id)
+                if let s = ss.first(where: { $0.key == selected[id] }) ?? ss.first { openChat(s) }
+            }
+        case 53: // Esc
+            openSide = nil
+            render()
+        default:
+            return false
+        }
+        return true
     }
 
     func click(_ p: CGPoint) {
