@@ -41,6 +41,7 @@ private final class Slot {
     var sprite: Sprite
     var anim: Anim?
     var dotState: AgentState?
+    var pips: [CALayer] = []
     var leaving = false
     init(id: String, sprite: Sprite) { self.id = id; self.sprite = sprite }
 }
@@ -66,6 +67,9 @@ final class IslandController: NSObject {
     private var hideToken = 0
     private var bubble: BubbleView?
     private var openSide: Side?
+    /// Session previewed in the tray per agent (hovering its pip), and where those pips are.
+    private var selected: [String: String] = [:]
+    private var pipHits: [(rect: CGRect, key: String)] = []
     private var dropped: Pending?
     private var tray: TrayView?
     private var trayKey = ""
@@ -275,6 +279,7 @@ final class IslandController: NSObject {
                 move(slot.layer, to: t.center, animated: animated)
                 scale(slot.layer, to: t.scale, animated: animated)
                 apply(slot, summary)
+                for p in slot.pips { p.isHidden = side == openSide }
             }
         }
         for (id, slot) in slots where !live.contains(id) && !slot.leaving {
@@ -335,6 +340,8 @@ final class IslandController: NSObject {
             slot.anim = anim
             play(slot)
         }
+        layoutPips(slot, summary.states)
+        slot.dot.isHidden = summary.count > 1
         guard slot.dotState != summary.state else { return }
         slot.dotState = summary.state
         slot.dot.removeAllAnimations()
@@ -356,6 +363,53 @@ final class IslandController: NSObject {
         default:
             slot.dot.opacity = 0
         }
+    }
+
+    static func color(_ s: AgentState, tint: NSColor) -> NSColor {
+        switch s {
+        case .question: return .systemOrange
+        case .working: return tint
+        case .done: return .systemGreen
+        case .idle: return NSColor(white: 1, alpha: 0.28)
+        }
+    }
+
+    /// Several sessions of one agent: a row of tiny pips under its mascot, no extra width.
+    private func layoutPips(_ slot: Slot, _ states: [AgentState]) {
+        let n = states.count > 1 ? min(states.count, 5) : 0
+        let tint = config.agent(slot.id)?.tint ?? .white
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        while slot.pips.count < n {
+            let p = CALayer()
+            p.cornerRadius = 1.25
+            slot.layer.addSublayer(p)
+            slot.pips.append(p)
+        }
+        while slot.pips.count > n { slot.pips.removeLast().removeFromSuperlayer() }
+        let b = slot.sprite.body, w = slot.layer.bounds.width, h = slot.layer.bounds.height
+        let step: CGFloat = 4.5, size: CGFloat = 2.5
+        let x0 = b.midX * w - CGFloat(n - 1) * step / 2
+        // Just above the island's bottom edge, clear of the mascot's feet.
+        let y = notch.minY + 3.5 - (notch.midY - (1 - b.midY) * h)
+        for (i, p) in slot.pips.enumerated() {
+            p.frame = CGRect(x: x0 + CGFloat(i) * step - size / 2, y: y - size / 2, width: size, height: size)
+            let c = Self.color(states[i], tint: tint).cgColor
+            if p.backgroundColor != c {
+                p.backgroundColor = c
+                p.removeAllAnimations()
+                if states[i] == .question {
+                    let pulse = CABasicAnimation(keyPath: "opacity")
+                    pulse.fromValue = 1
+                    pulse.toValue = 0.3
+                    pulse.duration = 0.8
+                    pulse.autoreverses = true
+                    pulse.repeatCount = .infinity
+                    p.add(pulse, forKey: "pulse")
+                }
+            }
+        }
+        CATransaction.commit()
     }
 
     private func play(_ slot: Slot) {
@@ -392,6 +446,8 @@ final class IslandController: NSObject {
     private func updateTrayView(_ sides: [Side: [(AgentConfig, AgentSummary)]]) {
         guard let side = openSide, let r = trayRects[side] else {
             trayKey = ""
+            pipHits = []
+            selected = [:]
             if let t = tray {
                 tray = nil
                 NSAnimationContext.runAnimationGroup({ $0.duration = 0.08; t.animator().alphaValue = 0 }, completionHandler: { t.removeFromSuperview() })
@@ -400,11 +456,14 @@ final class IslandController: NSObject {
         }
         let rows = sides[side]!.map { a, sum -> TrayView.Row in
             let ss = store.sessions(of: a.id)
-            return TrayView.Row(agent: a, state: sum.state, session: ss.first, count: ss.count, usage: Usage.read(a.id))
+            let i = ss.firstIndex { $0.key == selected[a.id] } ?? 0
+            let s = ss.isEmpty ? nil : ss[i]
+            return TrayView.Row(agent: a, state: s.map(store.displayState) ?? sum.state, session: s, usage: Usage.read(a.id),
+                                states: ss.map(store.displayState), keys: ss.map(\.key), selected: i)
         }
         // Rebuild only when something visible changed.
         let key = "\(side)|\(r)|" + rows.map {
-            "\($0.agent.id)\($0.state)\($0.count)\($0.session?.action ?? "")\($0.session?.title ?? "")\($0.session?.prompt ?? "")\(Int($0.usage?.fiveHour ?? -1))"
+            "\($0.agent.id)\($0.state)\($0.keys)\($0.states)\($0.selected)\($0.session?.action ?? "")\($0.session?.title ?? "")\($0.session?.prompt ?? "")\(Int($0.usage?.fiveHour ?? -1))"
         }.joined(separator: "|")
         guard key != trayKey else { return }
         let fresh = tray == nil || !trayKey.hasPrefix("\(side)|")
@@ -413,6 +472,7 @@ final class IslandController: NSObject {
         let t = TrayView(frame: r, side: side, rows: rows)
         view.addSubview(t)
         tray = t
+        pipHits = t.pips.map { (view.convert($0.rect, from: t), $0.key) }
         if fresh {
             t.alphaValue = 0
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
@@ -508,6 +568,7 @@ final class IslandController: NSObject {
         let p = pointer
         var rects = Array(trayRects.values)
         for (side, r) in wings where r.width > 0 && trayRects[side] == nil { rects.append(r) }
+        if openSide != nil { rects += pipHits.map(\.rect) }
         for r in rects {
             var opts: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways]
             if r.contains(p) { opts.insert(.assumeInside) }
@@ -529,7 +590,14 @@ final class IslandController: NSObject {
             closeWork?.cancel()
             if s != openSide {
                 openSide = s
+                selected = [:]
                 refreshTitles()
+                // Looking counts as reading: finished sessions on this side go quiet.
+                for a in config.config.agents where a.placement == s { store.markSeen(a.id) }
+                render()
+            } else if let hit = pipHits.first(where: { $0.rect.contains(pointer) }), let sess = store.sessions[hit.key],
+                      selected[sess.agent] != hit.key {
+                selected[sess.agent] = hit.key
                 render()
             }
         } else if openSide != nil {
@@ -545,8 +613,10 @@ final class IslandController: NSObject {
     }
 
     func click(_ p: CGPoint) {
+        if let hit = pipHits.first(where: { $0.rect.contains(p) }), let s = store.sessions[hit.key] { return openChat(s) }
         guard let id = hits.first(where: { $0.value.contains(p) })?.key else { return }
-        if let s = store.sessions(of: id).first { openChat(s) }
+        let ss = store.sessions(of: id)
+        if let s = ss.first(where: { $0.key == selected[id] }) ?? ss.first { openChat(s) }
     }
 
     func openChat(_ s: Session) {

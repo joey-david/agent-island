@@ -64,6 +64,8 @@ final class Pending {
 struct AgentSummary {
     let state: AgentState
     let count: Int
+    /// Per-session states, most urgent first (same order as `sessions(of:)`).
+    let states: [AgentState]
 }
 
 final class SessionStore {
@@ -199,10 +201,10 @@ final class SessionStore {
     }
 
     func summary(_ agent: String) -> AgentSummary? {
-        let mine = sessions.values.filter { $0.agent == agent }
+        let mine = sessions(of: agent)
         guard !mine.isEmpty else { return nil }
-        let top = mine.map(displayState).max() ?? .idle
-        return AgentSummary(state: top, count: mine.count)
+        let states = mine.map(displayState)
+        return AgentSummary(state: states.max() ?? .idle, count: mine.count, states: states)
     }
 
     func displayState(_ s: Session) -> AgentState {

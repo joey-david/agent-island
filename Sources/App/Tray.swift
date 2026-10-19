@@ -63,9 +63,14 @@ final class TrayView: NSView {
         let agent: AgentConfig
         let state: AgentState
         let session: Session?
-        let count: Int
         let usage: Usage?
+        let states: [AgentState]
+        let keys: [String]
+        let selected: Int
     }
+
+    /// Clickable session pips, in this view's coordinates.
+    private(set) var pips: [(rect: CGRect, key: String)] = []
 
     static let segW: CGFloat = 270, inset: CGFloat = 8, iconW: CGFloat = 30, edge: CGFloat = 12
 
@@ -87,22 +92,48 @@ final class TrayView: NSView {
             let tw = textX1 - textX0
             let align: NSTextAlignment = left ? .left : .right
 
-            var title = r.agent.displayName
-            if r.usage != nil { title += "  " }
-            let name = NSTextField(labelWithAttributedString: {
-                let a = NSMutableAttributedString(string: title, attributes: [
-                    .font: NSFont.systemFont(ofSize: 11.5, weight: .semibold), .foregroundColor: NSColor.white])
-                if let u = r.usage {
-                    a.append(NSAttributedString(string: "5h \(Int(u.fiveHour.rounded()))%", attributes: [
-                        .font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium),
-                        .foregroundColor: u.fiveHour >= 85 ? NSColor.systemOrange : NSColor(white: 1, alpha: 0.4)]))
+            // Name line: name, session pips, usage — laid out outward-in from the text edge.
+            let name = label(r.agent.displayName, 11.5, .semibold, .white)
+            name.sizeToFit()
+            var pieces: [NSView] = [name]
+            if r.states.count > 1 {
+                let n = min(r.states.count, 6)
+                let box = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(n) * 9 - 3, height: 6))
+                box.wantsLayer = true
+                for i in 0..<n {
+                    let d = CALayer()
+                    d.frame = CGRect(x: CGFloat(left ? i : n - 1 - i) * 9, y: 0, width: 6, height: 6)
+                    d.cornerRadius = 3
+                    d.backgroundColor = IslandController.color(r.states[i], tint: r.agent.tint).cgColor
+                    d.opacity = i == r.selected ? 1 : 0.55
+                    if i == r.selected { d.borderWidth = 1.2; d.borderColor = NSColor(white: 1, alpha: 0.9).cgColor }
+                    box.layer?.addSublayer(d)
                 }
-                return a
-            }())
-            name.alignment = align
-            name.lineBreakMode = .byTruncatingTail
-            name.frame = NSRect(x: textX0, y: h / 2 - 15, width: tw, height: 15)
-            addSubview(name)
+                box.identifier = NSUserInterfaceItemIdentifier("pips")
+                pieces.append(box)
+            }
+            if let u = r.usage {
+                let usage = label("5h \(Int(u.fiveHour.rounded()))%", 9.5, .medium,
+                                  u.fiveHour >= 85 ? .systemOrange : NSColor(white: 1, alpha: 0.4), mono: true)
+                usage.sizeToFit()
+                pieces.append(usage)
+            }
+            var x = left ? textX0 : textX1
+            let midY = h / 2 - 7.5
+            for v in pieces {
+                let w = min(v.frame.width, tw)
+                if !left { x -= w }
+                v.frame = NSRect(x: x, y: midY - v.frame.height / 2, width: w, height: v.frame.height)
+                addSubview(v)
+                if v.identifier?.rawValue == "pips" {
+                    let n = min(r.states.count, 6)
+                    for i in 0..<n {
+                        let px = v.frame.minX + CGFloat(left ? i : n - 1 - i) * 9
+                        pips.append((CGRect(x: px - 2, y: 0, width: 10, height: h), r.keys[i]))
+                    }
+                }
+                x += left ? w + 7 : -7
+            }
 
             let detail = label(detailText(r), 10.5, .regular, NSColor(white: 1, alpha: 0.55))
             detail.alignment = align
@@ -137,8 +168,7 @@ final class TrayView: NSView {
         case .done: what = "Finished " + Self.ago(s.updated)
         case .idle: what = "Idle"
         }
-        var parts = [task, what]
-        if r.count > 1 { parts.append("+\(r.count - 1)") }
+        let parts = [task, what]
         return parts.joined(separator: " · ")
     }
 
