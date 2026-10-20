@@ -309,7 +309,7 @@ final class IslandController: NSObject {
         if show && !visible {
             visible = true
             collapse()
-            window.orderFrontRegardless()
+            if !hushed { window.orderFrontRegardless() }
         }
         if openSide.map({ sides[$0]!.isEmpty }) ?? false { openSide = nil }
 
@@ -829,8 +829,13 @@ final class IslandController: NSObject {
         guard on != hushed else { return }
         hushed = on
         if on { openSide = nil }
-        window.ignoresMouseEvents = on
-        NSAnimationContext.runAnimationGroup { $0.duration = on ? 0.25 : 0.18; window.animator().alphaValue = on ? 0 : 1 }
+        // Fade, then take the window off screen. (Setting ignoresMouseEvents instead would end the
+        // click-through of its transparent parts for good, and the window spans the menu bar.)
+        if !on && visible { window.orderFrontRegardless() }
+        NSAnimationContext.runAnimationGroup({ $0.duration = on ? 0.25 : 0.18; window.animator().alphaValue = on ? 0 : 1 }) { [weak self] in
+            guard let self, self.hushed else { return }
+            self.window.orderOut(nil)
+        }
     }
 
     // MARK: keyboard
