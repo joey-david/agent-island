@@ -75,9 +75,19 @@ final class IslandController: NSObject {
     /// Demo mode: draws its own wallpaper, menu bar and notch in an ordinary window, for recordings.
     private let stage: Bool
     private let backdrop = CALayer(), notchCover = CAShapeLayer()
+    private let terminals = StageTerminals()
     private var hovers: [Side: CGRect] = [:]
     private var visible = false
     private var hideToken = 0
+    /// Hidden along with the menu bar (full screen, or auto-hide): back when it slides down,
+    /// for a question, or for a moment when an agent finishes.
+    private var hushed = false
+    private var menuBarDown = true
+    private var flashUntil = Date.distantPast
+    private var finished: Set<String> = []
+    private var barTimer: DispatchSourceTimer?
+    private var revealUntil = Date.distantPast
+    private var screenID: CGDirectDisplayID = 0
     private var bubble: BubbleView?
     private var openSide: Side?
     /// Session previewed in the tray per agent (hovering its pip), and where those pips are.
@@ -124,13 +134,14 @@ final class IslandController: NSObject {
         slotLayer.mask = mask
         if stage {
             root.insertSublayer(backdrop, at: 0)
+            root.insertSublayer(terminals.layer, at: 1)
             root.addSublayer(notchCover)
             root.cornerRadius = 14
             root.masksToBounds = true
             window.level = .floating
         }
         layoutScreen()
-        if stage { window.orderFrontRegardless() }
+        if stage { window.orderFrontRegardless() } else { watchMenuBar() }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             self?.layoutScreen()
             self?.render(animated: false)
@@ -152,6 +163,7 @@ final class IslandController: NSObject {
             nw = r.minX - l.maxX
         }
         screenTop = f.maxY
+        screenID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? CGMainDisplayID()
         screenX = f.minX
         screenW = f.width
         view.frame = NSRect(x: 0, y: 0, width: f.width, height: height)
@@ -183,7 +195,8 @@ final class IslandController: NSObject {
         window.setFrame(NSRect(x: f.midX - W / 2, y: f.midY - height / 2, width: W, height: height), display: false)
         view.frame = NSRect(x: 0, y: 0, width: W, height: height)
         host.frame = view.bounds
-        for l in [root, slotLayer, mask, backdrop] { l.frame = view.bounds }
+        for l in [root, slotLayer, mask, backdrop, terminals.layer] { l.frame = view.bounds }
+        terminals.scale = screen.backingScaleFactor
         for l in [root, bar, barMask, panel, slotLayer, notchCover] + Array(trays.values) + Array(trayMasks.values) {
             l.contentsScale = screen.backingScaleFactor
         }
@@ -278,6 +291,11 @@ final class IslandController: NSObject {
         }
         let pending = store.pending.first
         let show = !sides[.left]!.isEmpty || !sides[.right]!.isEmpty || pending != nil
+        let done = Set(store.sessions.values.filter { store.displayState($0) == .done }.map(\.key))
+        if !done.subtracting(finished).isEmpty && !menuBarDown { flash() }
+        finished = done
+        hush(!stage && !menuBarDown && pending == nil && Date() >= flashUntil)
+        if stage { terminals.update(store, config) }
         if pending != nil, !windowTall {
             fitWindow(tall: true)
         } else if pending == nil, windowTall {
@@ -331,17 +349,20 @@ final class IslandController: NSObject {
             openSide = side
         }
         trayRects = [:]
+        var openRows: [TrayView.Row] = []
         for side in [Side.left, .right] {
             let rows = sides[side]!
             let path: CGPath
             if side == openSide {
-                let w = max(CGFloat(rows.count) * TrayView.segW + TrayView.inset, wings[side]!.width)
+                openRows = trayRows(rows)
+                let widths = openRows.map(TrayView.width)
+                let w = max(widths.reduce(TrayView.inset, +), wings[side]!.width)
                 let r = side == .left ? CGRect(x: notch.minX - w, y: notch.minY, width: w, height: notch.height)
                                       : CGRect(x: notch.maxX, y: notch.minY, width: w, height: notch.height)
                 trayRects[side] = r
                 path = side == .left ? shape(r.minX, notch.maxX, notch.minY, barRadius) : shape(notch.minX, r.maxX, notch.minY, barRadius)
                 for (i, (a, _)) in rows.enumerated() {
-                    let seg = TrayView.segment(i, side: side, in: r)
+                    let seg = TrayView.segment(i, side: side, in: r, widths: widths)
                     let ix = side == .left ? seg.minX + TrayView.edge + TrayView.iconW / 2 : seg.maxX - TrayView.edge - TrayView.iconW / 2
                     targets[a.id] = (CGPoint(x: ix, y: notch.midY), 1)
                     hits[a.id] = seg
@@ -352,7 +373,7 @@ final class IslandController: NSObject {
             set(trays[side]!, path, animated: animated)
             set(trayMasks[side]!, path, animated: animated)
         }
-        updateTrayView(sides)
+        updateTrayView(openRows)
 
         // Questions: the island morphs wider and taller in one spring (the asking side widens with
         // it), and the content fades up into place partway through.
@@ -531,7 +552,18 @@ final class IslandController: NSObject {
 
     // MARK: tray
 
-    private func updateTrayView(_ sides: [Side: [(AgentConfig, AgentSummary)]]) {
+    private func trayRows(_ agents: [(AgentConfig, AgentSummary)]) -> [TrayView.Row] {
+        agents.map { a, sum in
+            let ss = store.sessions(of: a.id)
+            let i = ss.firstIndex { $0.key == selected[a.id] } ?? 0
+            let s = ss.isEmpty ? nil : ss[i]
+            return TrayView.Row(agent: a, state: s.map(store.displayState) ?? sum.state, session: s, usage: Usage.read(a.id),
+                                states: ss.map(store.displayState), keys: ss.map(\.key), selected: i, focused: keyFocus == a.id,
+                                switching: ss.count > 1 && selected[a.id] != nil)
+        }
+    }
+
+    private func updateTrayView(_ rows: [TrayView.Row]) {
         guard let side = openSide, let r = trayRects[side] else {
             trayKey = ""
             pipHits = []
@@ -543,14 +575,6 @@ final class IslandController: NSObject {
                 NSAnimationContext.runAnimationGroup({ $0.duration = 0.08; t.animator().alphaValue = 0 }, completionHandler: { t.removeFromSuperview() })
             }
             return
-        }
-        let rows = sides[side]!.map { a, sum -> TrayView.Row in
-            let ss = store.sessions(of: a.id)
-            let i = ss.firstIndex { $0.key == selected[a.id] } ?? 0
-            let s = ss.isEmpty ? nil : ss[i]
-            return TrayView.Row(agent: a, state: s.map(store.displayState) ?? sum.state, session: s, usage: Usage.read(a.id),
-                                states: ss.map(store.displayState), keys: ss.map(\.key), selected: i, focused: keyFocus == a.id,
-                                switching: ss.count > 1 && selected[a.id] != nil)
         }
         // Rebuild only when something visible changed.
         let key = "\(side)|\(r)|" + rows.map {
@@ -681,7 +705,11 @@ final class IslandController: NSObject {
     // MARK: input
 
     /// Pointer in island coordinates; anything above the screen's top counts as its top row.
+    /// Demo autoplay's drawn cursor, standing in for the real one.
+    var fakePointer: CGPoint?
+
     private var pointer: CGPoint {
+        if let p = fakePointer { return p }
         let p = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
         return CGPoint(x: p.x, y: min(p.y, top - 0.5))
     }
@@ -738,6 +766,71 @@ final class IslandController: NSObject {
             closeWork = w
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: w)
         }
+    }
+
+    // MARK: menu bar
+
+    /// Follows the menu bar on the island's screen. Where macOS auto-hides it (by default in
+    /// full-screen spaces), the island hides too and comes back when the pointer reaches the top
+    /// edge, staying while it's within the bar or the island. The window list can't tell a hidden
+    /// menu bar from a shown one, so this mirrors the rule rather than watching the bar.
+    private func watchMenuBar() {
+        let ws = NSWorkspace.shared.notificationCenter
+        for n in [NSWorkspace.activeSpaceDidChangeNotification, NSWorkspace.didActivateApplicationNotification] {
+            ws.addObserver(forName: n, object: nil, queue: .main) { [weak self] _ in
+                self?.updateAutoHide()
+                // The space's type can settle after the switch animation.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self?.updateAutoHide() }
+            }
+        }
+        updateAutoHide()
+    }
+
+    private func updateAutoHide() {
+        let hides = Spaces.isFullScreen(screenID) ? Spaces.menuBarHidesInFullScreen : Spaces.menuBarHidesOnDesktop
+        if hides, barTimer == nil {
+            let t = DispatchSource.makeTimerSource(queue: .main)
+            t.schedule(deadline: .now(), repeating: 0.1, leeway: .milliseconds(30))
+            t.setEventHandler { [weak self] in self?.checkMenuBar() }
+            t.resume()
+            barTimer = t
+            menuBarDown = false
+            render()
+        } else if !hides, let t = barTimer {
+            t.cancel()
+            barTimer = nil
+            menuBarDown = true
+            render()
+        }
+    }
+
+    private func checkMenuBar() {
+        let m = NSEvent.mouseLocation
+        let across = m.x >= screenX && m.x <= screenX + screenW
+        let p = view.convert(window.convertPoint(fromScreen: m), from: nil)
+        let down: Bool
+        if across && m.y >= screenTop - 1 { down = true }
+        else if menuBarDown && across && (m.y >= screenTop - notch.height - 4 || (!hushed && side(at: p) != nil)) { down = true }
+        else { down = false }
+        if down { revealUntil = Date() + 0.4 }
+        let next = down || Date() < revealUntil
+        guard next != menuBarDown else { return }
+        menuBarDown = next
+        render()
+    }
+
+    /// Something just finished while the island is hidden: pop in, then go again.
+    private func flash() {
+        flashUntil = Date() + 2.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { [weak self] in self?.render() }
+    }
+
+    private func hush(_ on: Bool) {
+        guard on != hushed else { return }
+        hushed = on
+        if on { openSide = nil }
+        window.ignoresMouseEvents = on
+        NSAnimationContext.runAnimationGroup { $0.duration = on ? 0.25 : 0.18; window.animator().alphaValue = on ? 0 : 1 }
     }
 
     // MARK: keyboard
@@ -813,7 +906,54 @@ final class IslandController: NSObject {
     func openChat(_ s: Session) {
         for p in store.pending where p.session === s { store.release(p) }
         store.markSeen(s.agent)
+        if stage { return terminals.open(s, agent: config.agent(s.agent), from: slots[s.key]?.layer.position ?? CGPoint(x: notch.midX, y: notch.midY)) }
         Focus.open(s, agent: config.agent(s.agent))
+    }
+
+    // MARK: autoplay hooks
+
+    /// Where an agent's front mascot is, in view coordinates.
+    func mascot(_ agent: String) -> CGPoint? {
+        store.sessions(of: agent).lazy.compactMap { self.slots[$0.key]?.layer.position }.first
+    }
+
+    /// Centre of the question panel's button labelled `title`.
+    func button(_ title: String) -> CGPoint? {
+        func find(_ v: NSView) -> NSView? {
+            if let b = v as? HoverButton, Self.labels(b).contains(title) { return b }
+            for s in v.subviews { if let f = find(s) { return f } }
+            return nil
+        }
+        guard let b = bubble.flatMap(find) else { return nil }
+        let r = view.convert(b.bounds, from: b)
+        return CGPoint(x: r.midX, y: r.midY)
+    }
+
+    private static func labels(_ v: NSView) -> [String] {
+        ((v as? NSTextField).map { [$0.stringValue] } ?? []) + v.subviews.flatMap(labels)
+    }
+
+    func overlay(_ l: CALayer) {
+        l.zPosition = 1000
+        root.addSublayer(l)
+    }
+
+    /// Delivers a synthesized mouse event at a view point, as if the pointer were there.
+    func send(_ type: NSEvent.EventType, at p: CGPoint) {
+        let w = view.convert(p, to: nil)
+        guard let e = NSEvent.mouseEvent(with: type, location: w, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                         windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+        window.sendEvent(e)
+    }
+
+    /// The view under a point, for hover highlights.
+    func hitView(at p: CGPoint) -> NSView? { holder.hitTest(holder.convert(p, from: view)) }
+
+    func press(_ code: UInt16) {
+        guard let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                       windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "",
+                                       isARepeat: false, keyCode: code) else { return }
+        _ = key(e)
     }
 
     func showMenu(_ e: NSEvent, in v: NSView) {

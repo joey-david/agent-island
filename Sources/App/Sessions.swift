@@ -79,10 +79,13 @@ final class SessionStore {
     private var saveQueued = false
     private var lingerToken = 0
     private static let url = islandHome.appendingPathComponent("sessions.json")
+    /// Off for demo autoplay, whose sessions are made up.
+    private let persist: Bool
 
-    init(config: ConfigStore) {
+    init(config: ConfigStore, persist: Bool = true) {
         self.config = config
-        restore()
+        self.persist = persist
+        if persist { restore() }
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
                                                           object: nil, queue: .main) { [weak self] _ in self?.checkFocus() }
     }
@@ -312,7 +315,7 @@ final class SessionStore {
         scheduleLinger()
         updateFocusTimer()
         onChange?()
-        guard !saveQueued else { return }
+        guard persist, !saveQueued else { return }
         saveQueued = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self else { return }

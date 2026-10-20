@@ -30,7 +30,7 @@ struct Config: Codable {
     var launchAtLogin: Bool?
 
     static let initial = Config(agents: [
-        AgentConfig(id: "claude", name: "Claude Code", side: .left, sprite: "clawd", color: "#D77757"),
+        AgentConfig(id: "claude", name: "Claude", side: .left, sprite: "clawd", color: "#D77757"),
         AgentConfig(id: "codex", name: "Codex", side: .right, sprite: "codex", color: "#9DB8FF",
                     url: "codex://threads/{session}", app: "com.openai.codex"),
     ], doneLinger: 1200, menuBarIcon: true, launchAtLogin: true)
@@ -42,6 +42,13 @@ final class ConfigStore {
     var onChange: (() -> Void)?
     private var watcher: DispatchSourceFileSystemObject?
     private var lastData = Data()
+    /// Demo autoplay: a fixed config that never touches the file.
+    private var ephemeral = false
+
+    init(fixed: Config) {
+        config = fixed
+        ephemeral = true
+    }
 
     init() {
         try? FileManager.default.createDirectory(at: islandHome, withIntermediateDirectories: true)
@@ -80,6 +87,7 @@ final class ConfigStore {
     }
 
     private func save() {
+        guard !ephemeral else { return }
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         guard let data = try? enc.encode(config) else { return }

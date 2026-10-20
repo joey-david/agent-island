@@ -1,6 +1,7 @@
 #!/bin/bash
 # A scripted tour of Agent Island with throwaway sessions: pop-out, live tray, stacking,
-# a question, a permission prompt, finishing, and exiting. Answer in the island when asked.
+# a question, a permission prompt, finishing, clicking through to a finished session, and
+# exiting. Answer in the island when asked.
 # Your own agents are hidden meanwhile; your config comes back on exit.
 set -euo pipefail
 H="$HOME/.agent-island/bin/island-hook"
@@ -17,7 +18,7 @@ c = json.load(open(p))
 for a in c["agents"]:
     a["side"] = "hidden"
 c["agents"] = c["agents"][:8] + [
-    {"id": "demo-claude", "name": "Claude Code", "side": "left", "sprite": "clawd", "color": "#D77757"},
+    {"id": "demo-claude", "name": "Claude", "side": "left", "sprite": "clawd", "color": "#D77757"},
     {"id": "demo-codex", "name": "Codex", "side": "right", "sprite": "codex", "color": "#9DB8FF"},
 ]
 json.dump(c, open(p, "w"), indent=2)
@@ -66,12 +67,14 @@ say "Codex asks for permission"
 JSON
 emit codex a $X working earned-time "$PX" "Publishing a dry run"; sleep 2
 
-say "Work finishes: a little jump and a green dot"
-emit codex a $X done earned-time "$PX" ""; sleep 1
-emit claude b $B done portfolio "$PB" ""; sleep 2
-say "Hovering marks finished work as read"
-sleep 3
-emit claude a $A done agent-island "$PA" ""; sleep 2.5
+say "Codex finishes: a little jump and a green dot"
+emit codex a $X done earned-time "$PX" ""; sleep 2.5
+say "Click it to jump straight to its terminal"
+sleep 4
+emit claude b $B done portfolio "$PB" ""; sleep 1.5
+emit claude a $A done agent-island "$PA" ""; sleep 2
+say "Same for Claude; hovering also marks finished work as read"
+sleep 4.5
 
 say "Agents exit and the island tucks back behind the notch"
-kill $X; sleep 0.9; kill $C; sleep 0.9; kill $B; sleep 0.9; kill $A; sleep 1.5
+kill $X; sleep 1.1; kill $C; sleep 0.9; kill $B; sleep 0.9; kill $A; sleep 2

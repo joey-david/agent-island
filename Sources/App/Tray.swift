@@ -76,20 +76,34 @@ final class TrayView: NSView {
     /// Clickable session pips, in this view's coordinates.
     private(set) var pips: [(rect: CGRect, key: String)] = []
 
-    static let segW: CGFloat = 270, inset: CGFloat = 8, iconW: CGFloat = 30, edge: CGFloat = 12
+    static let maxW: CGFloat = 270, inset: CGFloat = 8, iconW: CGFloat = 30, edge: CGFloat = 12
+    /// Everything in a segment but its text: mascot and padding on one end, status glyph on the other.
+    private static let chrome = edge + iconW + 10 + 30
+
+    /// Just wide enough for the row's longer line, in 8pt steps so small text changes don't twitch it.
+    static func width(_ r: Row) -> CGFloat {
+        var name = label(r.agent.displayName, 11.5, .semibold, .white).fittingSize.width
+        if r.states.count > 1 { name += 7 + CGFloat(min(r.states.count, 6)) * 12 - 4 }
+        if let u = r.usage { name += 7 + usageLabel(u).fittingSize.width }
+        let detail = label(detailText(r), 10.5, .regular, .white).fittingSize.width
+        let w = chrome + max(name, detail, 40)
+        return min(maxW, (w / 8).rounded(.up) * 8)
+    }
 
     /// Segment 0 sits next to the notch, later ones further out, matching the collapsed order.
-    static func segment(_ i: Int, side: Side, in r: CGRect) -> CGRect {
-        side == .left ? CGRect(x: r.maxX - inset - CGFloat(i + 1) * segW, y: r.minY, width: segW, height: r.height)
-                      : CGRect(x: r.minX + inset + CGFloat(i) * segW, y: r.minY, width: segW, height: r.height)
+    static func segment(_ i: Int, side: Side, in r: CGRect, widths: [CGFloat]) -> CGRect {
+        let before = widths.prefix(i).reduce(0, +), w = widths[i]
+        return side == .left ? CGRect(x: r.maxX - inset - before - w, y: r.minY, width: w, height: r.height)
+                             : CGRect(x: r.minX + inset + before, y: r.minY, width: w, height: r.height)
     }
 
     init(frame: NSRect, side: Side, rows: [Row]) {
         super.init(frame: frame)
         let left = side == .left
         let h = frame.height
+        let widths = rows.map(Self.width)
         for (i, r) in rows.enumerated() {
-            var seg = Self.segment(i, side: side, in: frame)
+            var seg = Self.segment(i, side: side, in: frame, widths: widths)
             seg.origin.x -= frame.minX
             if r.focused {
                 let hl = NSView(frame: seg.insetBy(dx: 2, dy: 3))
@@ -105,7 +119,7 @@ final class TrayView: NSView {
             let align: NSTextAlignment = left ? .left : .right
 
             // Name line: name, session pips, usage — laid out outward-in from the text edge.
-            let name = label(r.agent.displayName, 11.5, .semibold, .white)
+            let name = Self.label(r.agent.displayName, 11.5, .semibold, .white)
             name.sizeToFit()
             var pieces: [NSView] = [name]
             if r.states.count > 1 {
@@ -125,8 +139,7 @@ final class TrayView: NSView {
                 pieces.append(box)
             }
             if let u = r.usage {
-                let usage = label("5h \(Int(u.fiveHour.rounded()))%", 9.5, .medium,
-                                  u.fiveHour >= 85 ? .systemOrange : NSColor(white: 1, alpha: 0.4), mono: true)
+                let usage = Self.usageLabel(u)
                 usage.sizeToFit()
                 pieces.append(usage)
             }
@@ -147,7 +160,7 @@ final class TrayView: NSView {
                 x += left ? w + 7 : -7
             }
 
-            let detail = label(detailText(r), 10.5, .regular, NSColor(white: 1, alpha: 0.55))
+            let detail = Self.label(Self.detailText(r), 10.5, .regular, NSColor(white: 1, alpha: 0.55))
             detail.alignment = align
             detail.frame = NSRect(x: textX0, y: h / 2 + 0.5, width: tw, height: 14)
             addSubview(detail)
@@ -161,7 +174,11 @@ final class TrayView: NSView {
     override var isFlipped: Bool { true }
     override func hitTest(_ p: NSPoint) -> NSView? { nil }
 
-    private func label(_ s: String, _ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, mono: Bool = false) -> NSTextField {
+    private static func usageLabel(_ u: Usage) -> NSTextField {
+        label("5h \(Int(u.fiveHour.rounded()))%", 9.5, .medium, u.fiveHour >= 85 ? .systemOrange : NSColor(white: 1, alpha: 0.4), mono: true)
+    }
+
+    private static func label(_ s: String, _ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, mono: Bool = false) -> NSTextField {
         let t = NSTextField(labelWithString: s)
         t.font = mono ? .monospacedDigitSystemFont(ofSize: size, weight: weight) : .systemFont(ofSize: size, weight: weight)
         t.textColor = color
@@ -169,7 +186,7 @@ final class TrayView: NSView {
         return t
     }
 
-    private func detailText(_ r: Row) -> String {
+    private static func detailText(_ r: Row) -> String {
         guard let s = r.session else { return "" }
         if r.switching {
             if let t = s.title.map(Self.clean), !t.isEmpty, !Self.generic(t) { return t }
@@ -178,8 +195,7 @@ final class TrayView: NSView {
         switch r.state {
         case .question: return "Waiting for you"
         case .working: return s.action ?? "Thinking…"
-        case .done: return "Finished " + Self.ago(s.updated)
-        case .idle: return "Idle"
+        case .done, .idle: return s.state == .done ? "Finished " + Self.ago(s.updated) : "Idle"
         }
     }
 

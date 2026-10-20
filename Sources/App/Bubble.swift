@@ -28,8 +28,9 @@ final class HoverButton: NSView {
         addTrackingArea(a)
         area = a
     }
-    override func mouseEntered(with e: NSEvent) { layer?.backgroundColor = hot.cgColor }
-    override func mouseExited(with e: NSEvent) { layer?.backgroundColor = normal.cgColor }
+    override func mouseEntered(with e: NSEvent) { highlight(true) }
+    override func mouseExited(with e: NSEvent) { highlight(false) }
+    func highlight(_ on: Bool) { layer?.backgroundColor = (on ? hot : normal).cgColor }
     override func mouseDown(with e: NSEvent) { layer?.opacity = 0.7 }
     override func mouseUp(with e: NSEvent) {
         layer?.opacity = 1

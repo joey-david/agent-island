@@ -6,11 +6,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var island: IslandController!
     private var menu: MenuController!
     private let server = Server()
+    private var autopilot: Autopilot?
 
     func applicationDidFinishLaunching(_ n: Notification) {
-        config = ConfigStore()
-        store = SessionStore(config: config)
-        let stage = CommandLine.arguments.contains("--stage")
+        let autoplay = CommandLine.arguments.contains("--autoplay")
+        config = autoplay ? ConfigStore(fixed: Autopilot.config) : ConfigStore()
+        store = SessionStore(config: config, persist: !autoplay)
+        let stage = autoplay || CommandLine.arguments.contains("--stage")
         island = IslandController(store: store, config: config, stage: stage)
         if !stage && Bundle.main.bundlePath.contains("/Applications/") { LoginItem.sync(config.config.launchAtLogin ?? true) }
         menu = MenuController(config: config, store: store)
@@ -22,15 +24,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.island.reload()
             self.menu.refreshItem()
         }
+        island.render(animated: false)
+        if autoplay {
+            autopilot = Autopilot(store: store, island: island)
+            autopilot?.run()
+            return
+        }
         server.start(path: islandHome.appendingPathComponent("island.sock").path) { [unowned self] msg, conn in
             self.store.handle(msg, conn: conn)
         }
-        island.render(animated: false)
     }
 }
 
 signal(SIGPIPE, SIG_IGN)
-if let id = Bundle.main.bundleIdentifier,
+let demo = CommandLine.arguments.contains("--stage") || CommandLine.arguments.contains("--autoplay")
+if !demo, let id = Bundle.main.bundleIdentifier,
    NSRunningApplication.runningApplications(withBundleIdentifier: id).contains(where: { $0 != .current }) {
     exit(0)
 }
