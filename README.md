@@ -8,7 +8,7 @@ Each session gets a small pet that animates while the agent works, shows an oran
 asks you something, and a green one when it's done. Questions and permission prompts open under
 the notch, so you can answer without finding the terminal. Clicking a pet focuses its Ghostty tab.
 
-It's native AppKit and uses about 42 MB of memory, with no measurable CPU when nothing is happening.
+It's native AppKit and uses about 42 MB of memory at peak usage, with no measurable CPU when nothing is happening.
 
 ## Install
 
