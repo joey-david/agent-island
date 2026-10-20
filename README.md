@@ -1,14 +1,14 @@
 # Topnotchers
 
-Your coding agents, living in your Mac's notch.
+A macOS app that shows your Claude Code and Codex sessions next to the notch.
 
 ![Topnotchers demo](docs/demo.gif)
 
-- **See every agent at a glance.** Each Claude Code and Codex session gets a mascot by the notch
-  that shows whether it's working, needs you, or is done.
-- **Answer from the notch.** Questions and permission prompts drop down; reply without switching.
-- **One click back.** Click a mascot to jump to its terminal tab.
-- **Insanely light.** Native, under 1% CPU and ~42 MB of memory.
+Each session gets a small pet that animates while the agent works, shows an orange dot when it
+asks you something, and a green one when it's done. Questions and permission prompts open under
+the notch, so you can answer without finding the terminal. Clicking a pet focuses its Ghostty tab.
+
+It's native AppKit and uses about 42 MB of memory, with no measurable CPU when nothing is happening.
 
 ## Install
 
@@ -17,8 +17,8 @@ brew install joey-david/tap/topnotchers && topnotchers-setup
 ```
 
 or `curl -fsSL https://raw.githubusercontent.com/joey-david/topnotchers/master/install.sh | bash`.
-Apple silicon, macOS 14+.
+Needs Apple silicon, macOS 14+ and the Xcode Command Line Tools.
 
 ---
 
-Made by Joey. Follow [@t0rt0ised](https://x.com/t0rt0ised), and a ⭐ helps others find it.
+Made by Joey ([@t0rt0ised](https://x.com/t0rt0ised)).
