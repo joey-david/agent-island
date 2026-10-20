@@ -1,7 +1,7 @@
-"""Idempotently add Agent Island hooks to Claude Code and Codex (removes older island-hook entries)."""
+"""Idempotently add Topnotchers hooks to Claude Code and Codex (removes older topnotchers-hook entries)."""
 import json, os, shutil
 
-HOOK = os.path.expanduser('~/.agent-island/bin/island-hook')
+HOOK = os.path.expanduser('~/.topnotchers/bin/topnotchers-hook')
 WAIT = 12 * 3600  # a question can sit until you get to it
 
 CLAUDE = [
@@ -20,13 +20,13 @@ def merge(path, agent, plan):
     if os.path.exists(path):
         with open(path) as f:
             data = json.load(f)
-        if not os.path.exists(path + '.bak-agent-island'):
-            shutil.copy2(path, path + '.bak-agent-island')
+        if not os.path.exists(path + '.bak-topnotchers'):
+            shutil.copy2(path, path + '.bak-topnotchers')
     hooks = data.setdefault('hooks', {})
     for event in list(hooks):
         groups = []
         for g in hooks[event]:
-            g['hooks'] = [h for h in g.get('hooks', []) if 'island-hook' not in h.get('command', '')]
+            g['hooks'] = [h for h in g.get('hooks', []) if not any(n in h.get('command', '') for n in ('topnotchers-hook', 'island-hook'))]
             if g['hooks']:
                 groups.append(g)
         if groups:

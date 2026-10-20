@@ -54,7 +54,7 @@ final class Pending {
     }
 
     func output(allow: Bool) -> String {
-        let decision: [String: Any] = allow ? ["behavior": "allow"] : ["behavior": "deny", "message": "Denied from Agent Island."]
+        let decision: [String: Any] = allow ? ["behavior": "allow"] : ["behavior": "deny", "message": "Denied from Topnotchers."]
         return json(["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": decision]])
     }
 
@@ -360,7 +360,7 @@ final class SessionStore {
 
     // MARK: debugging
 
-    /// Event log, only written while ~/.agent-island/events.log exists.
+    /// Event log, only written while ~/.topnotchers/events.log exists.
     private static let logURL = islandHome.appendingPathComponent("events.log")
     private static let logHandle: FileHandle? = {
         guard let h = try? FileHandle(forWritingTo: logURL) else { return nil }

@@ -1,8 +1,8 @@
 import Foundation
 
 /// Rate-limit usage per agent, read only when a tray opens.
-/// Claude: ~/.agent-island/usage/claude.json, written by the status line.
-/// Codex: the newest rollout log. Others: ~/.agent-island/usage/<id>.json.
+/// Claude: ~/.topnotchers/usage/claude.json, written by the status line.
+/// Codex: the newest rollout log. Others: ~/.topnotchers/usage/<id>.json.
 struct Usage {
     let fiveHour: Double      // percent used
     let resets: Date?

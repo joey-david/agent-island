@@ -1,14 +1,14 @@
 #!/bin/bash
-# A scripted tour of Agent Island with throwaway sessions: pop-out, live tray, stacking,
+# A scripted tour of Topnotchers with throwaway sessions: pop-out, live tray, stacking,
 # a question, a permission prompt, finishing, clicking through to a finished session, and
 # exiting. Answer in the island when asked.
 # Your own agents are hidden meanwhile; your config comes back on exit.
 set -euo pipefail
-H="$HOME/.agent-island/bin/island-hook"
+H="$HOME/.topnotchers/bin/topnotchers-hook"
 [ -x "$H" ] || { echo "Run ./install.sh first."; exit 1; }
-pgrep -x AgentIsland >/dev/null || { open -a "Agent Island" && sleep 1.5; }
+pgrep -x Topnotchers >/dev/null || { open -a "Topnotchers" && sleep 1.5; }
 
-CONFIG="$HOME/.agent-island/config.json"
+CONFIG="$HOME/.topnotchers/config.json"
 [ -f "$CONFIG.demo-backup" ] && mv "$CONFIG.demo-backup" "$CONFIG"   # an earlier run was interrupted
 cp "$CONFIG" "$CONFIG.demo-backup"
 python3 -I - "$CONFIG" <<'PY'
@@ -40,12 +40,12 @@ PX="Fix the flaky sync test"
 SECONDS=0; sleep 1.5
 
 say "Claude pops out from behind the notch and starts working"
-emit claude a $A working agent-island "$PA" "Reading Island.swift"; sleep 2.5
+emit claude a $A working topnotchers "$PA" "Reading Island.swift"; sleep 2.5
 say "Codex joins on the right"
 emit codex a $X working earned-time "$PX" "Running the server tests"; sleep 3
 say "Hover a side: it widens to show the task and live action"
-emit claude a $A working agent-island "$PA" "Editing Sprites.swift"; sleep 1.5
-emit claude a $A working agent-island "$PA" "Building the app"; sleep 1.5
+emit claude a $A working topnotchers "$PA" "Editing Sprites.swift"; sleep 1.5
+emit claude a $A working topnotchers "$PA" "Building the app"; sleep 1.5
 say "More Claude sessions stack up behind the first"
 emit claude b $B working portfolio "$PB" "Editing index.html"; sleep 1
 emit claude c $C idle sync-server "$PC" ""; sleep 2
@@ -54,11 +54,11 @@ sleep 5
 
 say "Claude has a question: the island expands into a panel"
 "$H" --agent demo-claude --wait --pid "$A" >/dev/null <<JSON
-{"hook_event_name":"PreToolUse","session_id":"demo-a","cwd":"$HOME/projects/agent-island","tool_name":"AskUserQuestion",
+{"hook_event_name":"PreToolUse","session_id":"demo-a","cwd":"$HOME/projects/topnotchers","tool_name":"AskUserQuestion",
  "tool_input":{"questions":[{"header":"Mascot","question":"Which mascot should sit on the right?","multiSelect":false,
  "options":[{"label":"Codex","description":"The official pet"},{"label":"Hoots","description":"The owl"},{"label":"Dewey","description":"The tidy one"}]}]}}
 JSON
-emit claude a $A working agent-island "$PA" "Applying your answer"; sleep 2
+emit claude a $A working topnotchers "$PA" "Applying your answer"; sleep 2
 
 say "Codex asks for permission"
 "$H" --agent demo-codex --wait --pid "$X" >/dev/null <<JSON
@@ -72,7 +72,7 @@ emit codex a $X done earned-time "$PX" ""; sleep 2.5
 say "Click it to jump straight to its terminal"
 sleep 4
 emit claude b $B done portfolio "$PB" ""; sleep 1.5
-emit claude a $A done agent-island "$PA" ""; sleep 2
+emit claude a $A done topnotchers "$PA" ""; sleep 2
 say "Same for Claude; hovering also marks finished work as read"
 sleep 4.5
 

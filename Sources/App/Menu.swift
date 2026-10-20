@@ -18,7 +18,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         if config.config.menuBarIcon != false {
             guard item == nil else { return }
             let it = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-            it.button?.image = NSImage(systemSymbolName: "capsule.lefthalf.filled", accessibilityDescription: "Agent Island")
+            it.button?.image = NSImage(systemSymbolName: "capsule.lefthalf.filled", accessibilityDescription: "Topnotchers")
             let m = NSMenu()
             m.delegate = self
             it.menu = m
@@ -101,7 +101,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         m.addItem(entry("Edit Config…", #selector(editConfig)))
         m.addItem(entry("Show in Menu Bar", #selector(toggleIcon), on: config.config.menuBarIcon != false))
         m.addItem(entry("Open at Login", #selector(toggleLogin), on: LoginItem.enabled))
-        let quit = NSMenuItem(title: "Quit Agent Island", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit Topnotchers", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         m.addItem(quit)
     }
 
@@ -135,7 +135,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Add Agent"
-        alert.informativeText = "Agents report through:\n~/.agent-island/bin/island-hook --agent <id>\n(hook JSON on stdin, or: island-hook emit --agent <id> --state working|question|done|end)"
+        alert.informativeText = "Agents report through:\n~/.topnotchers/bin/topnotchers-hook --agent <id>\n(hook JSON on stdin, or: topnotchers-hook emit --agent <id> --state working|question|done|end)"
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.placeholderString = "id, e.g. gemini"
         alert.accessoryView = field

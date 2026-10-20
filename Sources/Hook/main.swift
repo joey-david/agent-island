@@ -1,7 +1,7 @@
-// island-hook: forwards an agent hook event to Agent Island over a Unix socket.
+// topnotchers-hook: forwards an agent hook event to Topnotchers over a Unix socket.
 //
-//   island-hook --agent claude [--wait]           hook JSON on stdin
-//   island-hook emit --agent aider --state working [--session S] [--cwd DIR]
+//   topnotchers-hook --agent claude [--wait]           hook JSON on stdin
+//   topnotchers-hook emit --agent aider --state working [--session S] [--cwd DIR]
 //                    [--prompt TASK] [--action TEXT] [--pid PID]
 //
 // Exits 0 immediately when the app isn't running. With --wait it blocks for the
@@ -72,7 +72,7 @@ msg["tty"] = tty
 msg["term"] = env["TERM_PROGRAM"]
 msg["bundle"] = env["__CFBundleIdentifier"]
 
-let path = NSHomeDirectory() + "/.agent-island/island.sock"
+let path = NSHomeDirectory() + "/.topnotchers/topnotchers.sock"
 let fd = socket(AF_UNIX, SOCK_STREAM, 0)
 guard fd >= 0 else { exit(0) }
 var addr = sockaddr_un()

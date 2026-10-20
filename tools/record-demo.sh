@@ -10,7 +10,7 @@ swiftc -O tools/drive.swift -o build/drive
 read -r SW SH < <(osascript -l JavaScript -e 'ObjC.import("AppKit"); const f = $.NSScreen.mainScreen.frame; `${f.size.width} ${f.size.height}`')
 X0=$(( (${SW%.*} - 1000) / 2 )); Y0=$(( (${SH%.*} - 440) / 2 ))
 
-pkill -x AgentIsland || true; sleep 0.4
+pkill -x Topnotchers || true; sleep 0.4
 build/drive move $(( ${SW%.*} / 2 )) $(( Y0 + 440 + 60 ))   # real pointer out of frame
 rm -f build/raw.mov
 # screencapture only saves when it runs its full length, so record long and trim to the demo.
@@ -18,9 +18,9 @@ T0=$(python3 -c 'import time; print(time.time())')
 screencapture -v -V 60 -R "$X0,$Y0,1000,440" build/raw.mov >/dev/null 2>&1 &
 CAP=$!
 sleep 1
-"build/Agent Island.app/Contents/MacOS/AgentIsland" --autoplay >/dev/null 2>&1   # returns when the demo ends
+"build/Topnotchers.app/Contents/MacOS/Topnotchers" --autoplay >/dev/null 2>&1   # returns when the demo ends
 END=$(python3 -c "import time; print(round(time.time() - $T0 - 0.2, 2))")
-open "$HOME/Applications/Agent Island.app"
+open "$HOME/Applications/Topnotchers.app"
 wait $CAP
 [ -s build/raw.mov ] || { echo "screencapture wrote nothing (screen-recording permission?)"; exit 1; }
 

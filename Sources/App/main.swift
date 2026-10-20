@@ -30,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             autopilot?.run()
             return
         }
-        server.start(path: islandHome.appendingPathComponent("island.sock").path) { [unowned self] msg, conn in
+        server.start(path: islandHome.appendingPathComponent("topnotchers.sock").path) { [unowned self] msg, conn in
             self.store.handle(msg, conn: conn)
         }
     }

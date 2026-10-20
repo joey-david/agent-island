@@ -1,8 +1,8 @@
-# Agent Island
+# Topnotchers
 
 A Dynamic Island for coding agents on a notched Mac.
 
-![Agent Island demo](docs/demo.gif)
+![Topnotchers demo](docs/demo.gif)
 
 One mascot per session peeks out from behind the notch: Clawd for Claude Code, the Codex pet
 for Codex. They animate while working, wave when they need you, and jump when done.
@@ -15,19 +15,19 @@ Native AppKit + Core Animation. No polling: agents report through hooks over a U
 ## Install
 
 ```sh
-./install.sh   # builds ~/Applications/Agent Island.app and wires Claude Code + Codex hooks
+./install.sh   # builds ~/Applications/Topnotchers.app and wires Claude Code + Codex hooks
 ./demo.sh      # a scripted tour with throwaway sessions
 ```
 
-Then approve the hooks once with `/hooks` in Codex, and let Agent Island control Ghostty when
+Then approve the hooks once with `/hooks` in Codex, and let Topnotchers control Ghostty when
 macOS asks (to focus the right tab).
 
 ## Other agents
 
 Up to 10, each on the left or right, set from the menu-bar item or
-`~/.agent-island/config.json`. Anything can report in:
+`~/.topnotchers/config.json`. Anything can report in:
 
 ```sh
-~/.agent-island/bin/island-hook --agent <id>                       # Claude-style hook JSON on stdin
-~/.agent-island/bin/island-hook emit --agent <id> --state working  # or question, done, end
+~/.topnotchers/bin/topnotchers-hook --agent <id>                       # Claude-style hook JSON on stdin
+~/.topnotchers/bin/topnotchers-hook emit --agent <id> --state working  # or question, done, end
 ```

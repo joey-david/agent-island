@@ -1,6 +1,6 @@
 import AppKit
 
-let islandHome = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".agent-island")
+let islandHome = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".topnotchers")
 let maxAgents = 10
 
 enum Side: String, Codable, CaseIterable { case left, right, hidden }
@@ -9,7 +9,7 @@ struct AgentConfig: Codable, Equatable {
     var id: String
     var name: String?
     var side: Side?
-    /// "clawd", a sprite name in ~/.agent-island/sprites, a ~/.codex/pets name, or a path.
+    /// "clawd", a sprite name in ~/.topnotchers/sprites, a ~/.codex/pets name, or a path.
     var sprite: String?
     var color: String?
     /// Deep link for sessions running in an app rather than a terminal: {session}, {cwd}.
@@ -136,12 +136,14 @@ extension NSColor {
 
 /// Open at login through a per-user LaunchAgent that just `open`s the app bundle.
 enum LoginItem {
-    static let plist = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/LaunchAgents/fyi.joeydavid.agent-island.plist")
+    static let plist = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/LaunchAgents/fyi.joeydavid.topnotchers.plist")
     static var enabled: Bool { FileManager.default.fileExists(atPath: plist.path) }
 
     static func sync(_ on: Bool) {
+        // From before the rename to Topnotchers.
+        try? FileManager.default.removeItem(at: plist.deletingLastPathComponent().appendingPathComponent("fyi.joeydavid.agent-island.plist"))
         guard on else { try? FileManager.default.removeItem(at: plist); return }
-        let job: [String: Any] = ["Label": "fyi.joeydavid.agent-island", "RunAtLoad": true,
+        let job: [String: Any] = ["Label": "fyi.joeydavid.topnotchers", "RunAtLoad": true,
                                   "ProgramArguments": ["/usr/bin/open", "-a", Bundle.main.bundlePath]]
         guard let data = try? PropertyListSerialization.data(fromPropertyList: job, format: .xml, options: 0),
               (try? Data(contentsOf: plist)) != data else { return }

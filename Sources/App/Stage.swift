@@ -183,12 +183,12 @@ final class Autopilot {
         let rest = CGPoint(x: 780, y: 110)
 
         wait(0.6) { self.cursor.opacity = 1 }
-        emit(0.6, "claude", "a", "working", "agent-island", PA, "Reading Island.swift")
+        emit(0.6, "claude", "a", "working", "topnotchers", PA, "Reading Island.swift")
         emit(1.8, "codex", "x", "working", "earned-time", PX, "Running the server tests")
-        emit(1.6, "claude", "a", "working", "agent-island", PA, "Editing Sprites.swift")
+        emit(1.6, "claude", "a", "working", "topnotchers", PA, "Editing Sprites.swift")
         // Hover: the side widens into a tray with the live action.
         move(0.4, toMascot: "claude")
-        emit(1.2, "claude", "a", "working", "agent-island", PA, "Building the app")
+        emit(1.2, "claude", "a", "working", "topnotchers", PA, "Building the app")
         move(1.6, to: rest)
         // More sessions stack behind the first; the arrows flip through them.
         emit(0.5, "claude", "b", "working", "portfolio", PB, "Editing index.html")
@@ -198,13 +198,13 @@ final class Autopilot {
         move(0.3, to: rest)
         // A question expands the island into a panel; answer it.
         ask(0.8, "claude", "a", """
-            {"hook_event_name":"PreToolUse","session_id":"a","cwd":"/Users/demo/projects/agent-island","tool_name":"AskUserQuestion",
+            {"hook_event_name":"PreToolUse","session_id":"a","cwd":"/Users/demo/projects/topnotchers","tool_name":"AskUserQuestion",
              "tool_input":{"questions":[{"header":"Mascot","question":"Which mascot should sit on the right?","multiSelect":false,
              "options":[{"label":"Codex","description":"The official pet"},{"label":"Hoots","description":"The owl"},{"label":"Dewey","description":"The tidy one"}]}]}}
             """)
         move(1.1, toButton: "Hoots")
         click(0.5)
-        emit(0.5, "claude", "a", "working", "agent-island", PA, "Applying your answer")
+        emit(0.5, "claude", "a", "working", "topnotchers", PA, "Applying your answer")
         move(0.2, to: rest)
         // A permission prompt; allow it.
         ask(1.0, "codex", "x", """
@@ -222,7 +222,7 @@ final class Autopilot {
         move(0.8, to: CGPoint(x: 940, y: 60))
         // Claude too.
         emit(0.6, "claude", "b", "done", "portfolio", PB, nil)
-        emit(1.0, "claude", "a", "done", "agent-island", PA, nil)
+        emit(1.0, "claude", "a", "done", "topnotchers", PA, nil)
         move(1.2, toMascot: "claude")
         click(1.0)
         move(0.8, to: CGPoint(x: 940, y: 60))
