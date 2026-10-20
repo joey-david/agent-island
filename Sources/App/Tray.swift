@@ -69,6 +69,8 @@ final class TrayView: NSView {
         let selected: Int
         /// Picked with the arrow keys.
         let focused: Bool
+        /// Switching between this agent's sessions (pip hover or arrows): name the session, not its activity.
+        let switching: Bool
     }
 
     /// Clickable session pips, in this view's coordinates.
@@ -169,17 +171,16 @@ final class TrayView: NSView {
 
     private func detailText(_ r: Row) -> String {
         guard let s = r.session else { return "" }
-        var task = s.prompt ?? s.project
-        if let t = s.title.map(Self.clean), !t.isEmpty, !Self.generic(t) { task = t }
-        let what: String
-        switch r.state {
-        case .question: what = "Waiting for you"
-        case .working: what = s.action ?? "Thinking…"
-        case .done: what = "Finished " + Self.ago(s.updated)
-        case .idle: what = "Idle"
+        if r.switching {
+            if let t = s.title.map(Self.clean), !t.isEmpty, !Self.generic(t) { return t }
+            return s.prompt ?? s.project
         }
-        let parts = [task, what]
-        return parts.joined(separator: " · ")
+        switch r.state {
+        case .question: return "Waiting for you"
+        case .working: return s.action ?? "Thinking…"
+        case .done: return "Finished " + Self.ago(s.updated)
+        case .idle: return "Idle"
+        }
     }
 
     /// Terminal titles lead with a spinner or status glyph.
