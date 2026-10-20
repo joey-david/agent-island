@@ -1,6 +1,8 @@
 import AppKit
 
-let islandHome = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".topnotchers")
+/// TOPNOTCHERS_HOME points a separate instance (the demo recording) at its own state and socket.
+let islandHome = ProcessInfo.processInfo.environment["TOPNOTCHERS_HOME"].map { URL(fileURLWithPath: $0) }
+    ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".topnotchers")
 let maxAgents = 10
 
 enum Side: String, Codable, CaseIterable { case left, right, hidden }
@@ -42,14 +44,6 @@ final class ConfigStore {
     var onChange: (() -> Void)?
     private var watcher: DispatchSourceFileSystemObject?
     private var lastData = Data()
-    /// Demo autoplay: a fixed config that never touches the file.
-    private var ephemeral = false
-
-    init(fixed: Config) {
-        config = fixed
-        ephemeral = true
-    }
-
     init() {
         try? FileManager.default.createDirectory(at: islandHome, withIntermediateDirectories: true)
         if let data = try? Data(contentsOf: Self.url), let c = try? JSONDecoder().decode(Config.self, from: data) {
@@ -87,7 +81,6 @@ final class ConfigStore {
     }
 
     private func save() {
-        guard !ephemeral else { return }
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         guard let data = try? enc.encode(config) else { return }

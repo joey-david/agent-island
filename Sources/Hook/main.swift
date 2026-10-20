@@ -72,7 +72,7 @@ msg["tty"] = tty
 msg["term"] = env["TERM_PROGRAM"]
 msg["bundle"] = env["__CFBundleIdentifier"]
 
-let path = NSHomeDirectory() + "/.topnotchers/topnotchers.sock"
+let path = (env["TOPNOTCHERS_HOME"] ?? NSHomeDirectory() + "/.topnotchers") + "/topnotchers.sock"
 let fd = socket(AF_UNIX, SOCK_STREAM, 0)
 guard fd >= 0 else { exit(0) }
 var addr = sockaddr_un()

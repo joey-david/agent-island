@@ -72,10 +72,6 @@ final class IslandController: NSObject {
     private var screenTop: CGFloat = 0, screenX: CGFloat = 0, screenW: CGFloat = 0
     private var windowTall = true
     private var shrinkToken = 0
-    /// Demo mode: draws its own wallpaper, menu bar and notch in an ordinary window, for recordings.
-    private let stage: Bool
-    private let backdrop = CALayer(), notchCover = CAShapeLayer()
-    private let terminals = StageTerminals()
     private var hovers: [Side: CGRect] = [:]
     private var visible = false
     private var hideToken = 0
@@ -107,13 +103,12 @@ final class IslandController: NSObject {
     private var bodyH: CGFloat { (notch.height * 0.56).rounded() }
     /// The window pokes a few points above the screen so the topmost pixel row, where a pointer
     /// pinned to the edge sits, is inside it rather than on its border.
-    private var overscan: CGFloat { stage ? 0 : 4 }
+    private let overscan: CGFloat = 4
     private var top: CGFloat { height - overscan }
 
-    init(store: SessionStore, config: ConfigStore, stage: Bool = false) {
+    init(store: SessionStore, config: ConfigStore) {
         self.store = store
         self.config = config
-        self.stage = stage
         super.init()
         window.contentView = holder
         holder.addSubview(view)
@@ -132,16 +127,8 @@ final class IslandController: NSObject {
         mask.addSublayer(barMask)
         for s in trayMasks.values { mask.addSublayer(s) }
         slotLayer.mask = mask
-        if stage {
-            root.insertSublayer(backdrop, at: 0)
-            root.insertSublayer(terminals.layer, at: 1)
-            root.addSublayer(notchCover)
-            root.cornerRadius = 14
-            root.masksToBounds = true
-            window.level = .floating
-        }
         layoutScreen()
-        if stage { window.orderFrontRegardless() } else { watchMenuBar() }
+        watchMenuBar()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             self?.layoutScreen()
             self?.render(animated: false)
@@ -151,11 +138,11 @@ final class IslandController: NSObject {
     // MARK: geometry
 
     private func layoutScreen() {
-        if stage { return layoutStage() }
         guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main else { return }
         let f = screen.frame
         let inset = screen.safeAreaInsets.top
-        let nh = inset > 0 ? inset : max(24, f.maxY - screen.visibleFrame.maxY)
+        // The physical notch runs about a point below the safe area; cover it fully.
+        let nh = inset > 0 ? inset + 1 : max(24, f.maxY - screen.visibleFrame.maxY)
         var nx = f.width / 2 - 90, nw: CGFloat = 180
         if let l = screen.auxiliaryTopLeftArea, let r = screen.auxiliaryTopRightArea {
             let origin = l.minX >= f.minX - 1 ? f.minX : 0
@@ -180,78 +167,12 @@ final class IslandController: NSObject {
     }
 
     private func fitWindow(tall: Bool) {
-        guard !stage else { return }
         let h = tall ? height : notch.height + overscan + 10
         windowTall = tall
         window.setFrame(NSRect(x: screenX, y: screenTop + overscan - h, width: screenW, height: h), display: false)
         view.setFrameOrigin(NSPoint(x: 0, y: h - height))
     }
 
-    private func layoutStage() {
-        guard let screen = NSScreen.main else { return }
-        let W: CGFloat = 1000
-        height = 440
-        let f = screen.frame
-        window.setFrame(NSRect(x: f.midX - W / 2, y: f.midY - height / 2, width: W, height: height), display: false)
-        view.frame = NSRect(x: 0, y: 0, width: W, height: height)
-        host.frame = view.bounds
-        for l in [root, slotLayer, mask, backdrop, terminals.layer] { l.frame = view.bounds }
-        terminals.scale = screen.backingScaleFactor
-        for l in [root, bar, barMask, panel, slotLayer, notchCover] + Array(trays.values) + Array(trayMasks.values) {
-            l.contentsScale = screen.backingScaleFactor
-        }
-        notch = CGRect(x: W / 2 - 92, y: height - 32, width: 184, height: 32)
-        buildBackdrop(W, screen.backingScaleFactor)
-        notchCover.fillColor = NSColor.black.cgColor
-        notchCover.path = notchPath
-        let lens = CAShapeLayer()
-        lens.path = CGPath(ellipseIn: CGRect(x: notch.midX - 3, y: notch.midY - 1, width: 6, height: 6), transform: nil)
-        lens.fillColor = NSColor(srgbRed: 0.07, green: 0.09, blue: 0.14, alpha: 1).cgColor
-        lens.strokeColor = NSColor(white: 0.16, alpha: 1).cgColor
-        lens.lineWidth = 1
-        notchCover.sublayers = [lens]
-        collapse()
-    }
-
-    /// Wallpaper and a dark menu bar, so the black island reads against something.
-    private func buildBackdrop(_ W: CGFloat, _ scale: CGFloat) {
-        backdrop.sublayers = nil
-        let wall = CAGradientLayer()
-        wall.frame = backdrop.bounds
-        wall.colors = ["#1B2A6B", "#5A3D9A", "#C2588A", "#F2A65A"].compactMap { NSColor(hex: $0)?.cgColor }
-        wall.startPoint = CGPoint(x: 0, y: 1)
-        wall.endPoint = CGPoint(x: 1, y: 0)
-        backdrop.addSublayer(wall)
-        let menu = CALayer()
-        menu.frame = CGRect(x: 0, y: height - 32, width: W, height: 32)
-        menu.backgroundColor = NSColor(white: 0, alpha: 0.28).cgColor
-        backdrop.addSublayer(menu)
-        func text(_ s: String, _ x: CGFloat, bold: Bool = false) -> CGFloat {
-            let t = CATextLayer()
-            let font = NSFont.systemFont(ofSize: 13, weight: bold ? .bold : .medium)
-            t.string = NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: NSColor.white])
-            let w = (s as NSString).size(withAttributes: [.font: font]).width
-            t.frame = CGRect(x: x, y: height - 24, width: w + 2, height: 17)
-            t.contentsScale = scale
-            backdrop.addSublayer(t)
-            return x + w
-        }
-        func symbol(_ name: String, _ x: CGFloat) {
-            guard let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: 13, weight: .medium).applying(.init(paletteColors: [.white]))) else { return }
-            let l = CALayer()
-            l.contents = img.cgImage(forProposedRect: nil, context: nil, hints: [.ctm: AffineTransform(scale: scale)])
-            l.contentsGravity = .resizeAspect
-            l.frame = CGRect(x: x, y: height - 25, width: 20, height: 18)
-            backdrop.addSublayer(l)
-        }
-        symbol("apple.logo", 16)
-        var x: CGFloat = 50
-        for (i, item) in ["Finder", "File", "Edit", "View"].enumerated() { x = text(item, x, bold: i == 0) + 20 }
-        var r: CGFloat = W - 16 - text("Mon 20 Oct  9:41", 0).rounded()
-        backdrop.sublayers?.last?.frame.origin.x = r
-        for name in ["battery.75percent", "wifi", "magnifyingglass", "switch.2"] { r -= 30; symbol(name, r) }
-    }
 
     private func shape(_ minX: CGFloat, _ maxX: CGFloat, _ bottom: CGFloat, _ R: CGFloat) -> CGPath {
         let ear: CGFloat = 6
@@ -294,8 +215,7 @@ final class IslandController: NSObject {
         let done = Set(store.sessions.values.filter { store.displayState($0) == .done }.map(\.key))
         if !done.subtracting(finished).isEmpty && !menuBarDown { flash() }
         finished = done
-        hush(!stage && !menuBarDown && pending == nil && Date() >= flashUntil)
-        if stage { terminals.update(store, config) }
+        hush(!menuBarDown && pending == nil && Date() >= flashUntil)
         if pending != nil, !windowTall {
             fitWindow(tall: true)
         } else if pending == nil, windowTall {
@@ -438,7 +358,7 @@ final class IslandController: NSObject {
         trackPointer()
 
         hideToken += 1
-        if !show && visible && !stage {
+        if !show && visible {
             let token = hideToken
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
                 guard let self, token == self.hideToken else { return }
@@ -705,11 +625,7 @@ final class IslandController: NSObject {
     // MARK: input
 
     /// Pointer in island coordinates; anything above the screen's top counts as its top row.
-    /// Demo autoplay's drawn cursor, standing in for the real one.
-    var fakePointer: CGPoint?
-
     private var pointer: CGPoint {
-        if let p = fakePointer { return p }
         let p = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
         return CGPoint(x: p.x, y: min(p.y, top - 0.5))
     }
@@ -911,11 +827,10 @@ final class IslandController: NSObject {
     func openChat(_ s: Session) {
         for p in store.pending where p.session === s { store.release(p) }
         store.markSeen(s.agent)
-        if stage { return terminals.open(s, agent: config.agent(s.agent), from: slots[s.key]?.layer.position ?? CGPoint(x: notch.midX, y: notch.midY)) }
         Focus.open(s, agent: config.agent(s.agent))
     }
 
-    // MARK: autoplay hooks
+    // MARK: demo driver
 
     /// Where an agent's front mascot is, in view coordinates.
     func mascot(_ agent: String) -> CGPoint? {
@@ -934,31 +849,34 @@ final class IslandController: NSObject {
         return CGPoint(x: r.midX, y: r.midY)
     }
 
+    /// For the demo driver: `mascot:<agent>`, `button:<label>` or `pip:<agent>:<n>` as a screen point (top-left origin,
+    /// as CGEvent wants), or `state` for sessions and pending questions. JSON either way.
+    func locate(_ what: String) -> String {
+        func json(_ o: Any) -> String { (try? JSONSerialization.data(withJSONObject: o)).map { String(decoding: $0, as: UTF8.self) } ?? "{}" }
+        if what == "state" {
+            let ss = store.sessions.values.map { ["key": $0.key, "agent": $0.agent, "state": "\(store.displayState($0))"] }
+            return json(["sessions": ss, "pending": store.pending.count, "open": openSide.map { "\($0)" } ?? "", "hushed": hushed])
+        }
+        let parts = what.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return "{}" }
+        var p: CGPoint?
+        switch parts[0] {
+        case "mascot": p = mascot(parts[1])
+        case "button": p = button(parts[1])
+        case "pip":   // pip:<agent>:<n>, the agent's n-th session dot in the open tray
+            let q = parts[1].split(separator: ":").map(String.init)
+            let mine = pipHits.filter { store.sessions[$0.key]?.agent == q.first }
+            if q.count == 2, let n = Int(q[1]), n < mine.count { p = CGPoint(x: mine[n].rect.midX, y: notch.midY + 7.5) }
+        default: break
+        }
+        guard let p else { return "{}" }
+        let s = window.convertPoint(toScreen: view.convert(p, to: nil))
+        let h = NSScreen.screens.first?.frame.height ?? 0
+        return json(["x": s.x, "y": h - s.y])
+    }
+
     private static func labels(_ v: NSView) -> [String] {
         ((v as? NSTextField).map { [$0.stringValue] } ?? []) + v.subviews.flatMap(labels)
-    }
-
-    func overlay(_ l: CALayer) {
-        l.zPosition = 1000
-        root.addSublayer(l)
-    }
-
-    /// Delivers a synthesized mouse event at a view point, as if the pointer were there.
-    func send(_ type: NSEvent.EventType, at p: CGPoint) {
-        let w = view.convert(p, to: nil)
-        guard let e = NSEvent.mouseEvent(with: type, location: w, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                         windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
-        window.sendEvent(e)
-    }
-
-    /// The view under a point, for hover highlights.
-    func hitView(at p: CGPoint) -> NSView? { holder.hitTest(holder.convert(p, from: view)) }
-
-    func press(_ code: UInt16) {
-        guard let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                       windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "",
-                                       isARepeat: false, keyCode: code) else { return }
-        _ = key(e)
     }
 
     func showMenu(_ e: NSEvent, in v: NSView) {

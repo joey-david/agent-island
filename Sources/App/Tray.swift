@@ -112,7 +112,7 @@ final class TrayView: NSView {
         let widths = rows.map(Self.width)
         for (i, r) in rows.enumerated() {
             var seg = Self.segment(i, side: side, in: frame, widths: widths)
-            seg.origin.x -= frame.minX
+            seg.origin = CGPoint(x: seg.minX - frame.minX, y: 0)
             if r.focused {
                 let hl = NSView(frame: seg.insetBy(dx: 2, dy: 3))
                 hl.wantsLayer = true

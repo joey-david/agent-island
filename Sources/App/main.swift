@@ -6,15 +6,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var island: IslandController!
     private var menu: MenuController!
     private let server = Server()
-    private var autopilot: Autopilot?
 
     func applicationDidFinishLaunching(_ n: Notification) {
-        let autoplay = CommandLine.arguments.contains("--autoplay")
-        config = autoplay ? ConfigStore(fixed: Autopilot.config) : ConfigStore()
-        store = SessionStore(config: config, persist: !autoplay)
-        let stage = autoplay || CommandLine.arguments.contains("--stage")
-        island = IslandController(store: store, config: config, stage: stage)
-        if !stage && Bundle.main.bundlePath.contains("/Applications/") { LoginItem.sync(config.config.launchAtLogin ?? true) }
+        config = ConfigStore()
+        store = SessionStore(config: config)
+        island = IslandController(store: store, config: config)
+        if Bundle.main.bundlePath.contains("/Applications/") { LoginItem.sync(config.config.launchAtLogin ?? true) }
         menu = MenuController(config: config, store: store)
         menu.open = { [unowned self] s in self.island.openChat(s) }
         island.menu = { [unowned self] in self.menu.makeMenu() }
@@ -25,20 +22,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.menu.refreshItem()
         }
         island.render(animated: false)
-        if autoplay {
-            autopilot = Autopilot(store: store, island: island)
-            autopilot?.run()
-            return
-        }
         server.start(path: islandHome.appendingPathComponent("topnotchers.sock").path) { [unowned self] msg, conn in
+            if msg["event"] as? String == "where" { return conn.respond(self.island.locate(msg["what"] as? String ?? "")) }
             self.store.handle(msg, conn: conn)
         }
     }
 }
 
 signal(SIGPIPE, SIG_IGN)
-let demo = CommandLine.arguments.contains("--stage") || CommandLine.arguments.contains("--autoplay")
-if !demo, let id = Bundle.main.bundleIdentifier,
+// A separate home (the demo recorder's) runs alongside the real app.
+let separate = ProcessInfo.processInfo.environment["TOPNOTCHERS_HOME"] != nil
+if !separate, let id = Bundle.main.bundleIdentifier,
    NSRunningApplication.runningApplications(withBundleIdentifier: id).contains(where: { $0 != .current }) {
     exit(0)
 }

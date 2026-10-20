@@ -37,7 +37,9 @@ enum Focus {
         let cwd = s.cwd
         focusedTerminal { id, wd in
             guard let id else { return }
-            if s.terminalID == nil || same(wd, cwd) { s.terminalID = id }
+            // Only a terminal in the session's directory: Ghostty's "front window" can be another
+            // one (a minimized window, say), and a wrong id sends clicks to the wrong tab.
+            if same(wd, cwd) { s.terminalID = id }
         }
     }
 

@@ -20,6 +20,26 @@ animating, and around 42 MB of memory. It's native AppKit and Core Animation: no
 web view, no polling. Agents report in through hooks over a Unix socket, idle mascots settle so
 nothing redraws when nothing is happening, and the window is only a notch tall.
 
+## How it works
+
+Claude Code and Codex report each session through their hooks, so a mascot appears the moment
+you start an agent in a terminal (or the Codex app) and leaves when you quit it.
+
+| State | What you see |
+| --- | --- |
+| **Working** | The mascot animates; hover to see the live action ("Editing Tray.swift", "Running the tests"). |
+| **Needs you** | A pulsing orange dot, and the question or permission prompt drops down from the notch. Pick an option, type your own answer, or open the chat. If you're already looking at that terminal, the agent asks there instead. |
+| **Done** | A hop and a green dot that stays until you look: hover its side, or switch to its tab or app. |
+| **Idle** | The mascot settles and nothing redraws. |
+
+- **Hover a side** and it widens into a tray: agent, task, live action and 5-hour usage.
+- **Several sessions** of the same agent stack behind one another, the most urgent in front. The
+  tray shows one dot per session, coloured by state; hover a dot or use ←/→ to flip between them,
+  Return to open one, Esc to close.
+- **Click** a mascot to jump to that session's Ghostty tab, or its app.
+- **Full screen** hides the island along with the menu bar; it comes back at the top edge, pops in
+  for a moment when an agent finishes, and stays up while a question waits.
+
 ## Install
 
 ```sh
