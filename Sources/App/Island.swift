@@ -74,6 +74,10 @@ final class IslandController: NSObject {
     private var shrinkToken = 0
     private var hovers: [Side: CGRect] = [:]
     private var visible = false
+    /// Hidden by moving off screen. (Ordered out while a full-screen space is current, the window
+    /// would come back on that one space only; ignoresMouseEvents would end the click-through of
+    /// its transparent parts for good, and it spans the menu bar.)
+    private var parked = true
     private var hideToken = 0
     /// Hidden along with the menu bar (full screen, or auto-hide): back when it slides down,
     /// for a question, or for a moment when an agent finishes.
@@ -128,6 +132,8 @@ final class IslandController: NSObject {
         for s in trayMasks.values { mask.addSublayer(s) }
         slotLayer.mask = mask
         layoutScreen()
+        // On screen for good from here; hiding parks it off screen.
+        window.orderFrontRegardless()
         watchMenuBar()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             self?.layoutScreen()
@@ -169,7 +175,7 @@ final class IslandController: NSObject {
     private func fitWindow(tall: Bool) {
         let h = tall ? height : notch.height + overscan + 10
         windowTall = tall
-        window.setFrame(NSRect(x: screenX, y: screenTop + overscan - h, width: screenW, height: h), display: false)
+        window.setFrame(NSRect(x: screenX - (parked ? 100_000 : 0), y: screenTop + overscan - h, width: screenW, height: h), display: false)
         view.setFrameOrigin(NSPoint(x: 0, y: h - height))
     }
 
@@ -229,7 +235,7 @@ final class IslandController: NSObject {
         if show && !visible {
             visible = true
             collapse()
-            if !hushed { window.orderFrontRegardless() }
+            if !hushed { park(false) }
         }
         if openSide.map({ sides[$0]!.isEmpty }) ?? false { openSide = nil }
 
@@ -363,7 +369,7 @@ final class IslandController: NSObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
                 guard let self, token == self.hideToken else { return }
                 self.visible = false
-                self.window.orderOut(nil)
+                self.park(true)
             }
         }
     }
@@ -745,13 +751,18 @@ final class IslandController: NSObject {
         guard on != hushed else { return }
         hushed = on
         if on { openSide = nil }
-        // Fade, then take the window off screen. (Setting ignoresMouseEvents instead would end the
-        // click-through of its transparent parts for good, and the window spans the menu bar.)
-        if !on && visible { window.orderFrontRegardless() }
+        // Fade, then take the window off screen.
+        if !on && visible { park(false) }
         NSAnimationContext.runAnimationGroup({ $0.duration = on ? 0.25 : 0.18; window.animator().alphaValue = on ? 0 : 1 }) { [weak self] in
             guard let self, self.hushed else { return }
-            self.window.orderOut(nil)
+            self.park(true)
         }
+    }
+
+    private func park(_ on: Bool) {
+        guard on != parked else { return }
+        parked = on
+        fitWindow(tall: windowTall)
     }
 
     // MARK: keyboard
