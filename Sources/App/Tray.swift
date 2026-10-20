@@ -65,6 +65,8 @@ final class TrayView: NSView {
         let session: Session?
         let usage: Usage?
         let states: [AgentState]
+        /// Every session of the agent, in the same order as `states`.
+        let sessions: [Session]
         let keys: [String]
         let selected: Int
         /// Picked with the arrow keys.
@@ -81,11 +83,17 @@ final class TrayView: NSView {
     private static let chrome = edge + iconW + 10 + 30
 
     /// Just wide enough for the row's longer line, in 8pt steps so small text changes don't twitch it.
+    /// With several sessions it fits the widest of them, title or activity, so switching between
+    /// them never moves the pips.
     static func width(_ r: Row) -> CGFloat {
         var name = label(r.agent.displayName, 11.5, .semibold, .white).fittingSize.width
         if r.states.count > 1 { name += 7 + CGFloat(min(r.states.count, 6)) * 12 - 4 }
         if let u = r.usage { name += 7 + usageLabel(u).fittingSize.width }
-        let detail = label(detailText(r), 10.5, .regular, .white).fittingSize.width
+        var lines = [detailText(r.session, r.state, switching: r.switching)]
+        if r.sessions.count > 1 {
+            for (s, st) in zip(r.sessions, r.states) { lines += [false, true].map { detailText(s, st, switching: $0) } }
+        }
+        let detail = lines.map { label($0, 10.5, .regular, .white).fittingSize.width }.max() ?? 0
         let w = chrome + max(name, detail, 40)
         return min(maxW, (w / 8).rounded(.up) * 8)
     }
@@ -160,7 +168,7 @@ final class TrayView: NSView {
                 x += left ? w + 7 : -7
             }
 
-            let detail = Self.label(Self.detailText(r), 10.5, .regular, NSColor(white: 1, alpha: 0.55))
+            let detail = Self.label(Self.detailText(r.session, r.state, switching: r.switching), 10.5, .regular, NSColor(white: 1, alpha: 0.55))
             detail.alignment = align
             detail.frame = NSRect(x: textX0, y: h / 2 + 0.5, width: tw, height: 14)
             addSubview(detail)
@@ -186,13 +194,13 @@ final class TrayView: NSView {
         return t
     }
 
-    private static func detailText(_ r: Row) -> String {
-        guard let s = r.session else { return "" }
-        if r.switching {
+    private static func detailText(_ session: Session?, _ state: AgentState, switching: Bool) -> String {
+        guard let s = session else { return "" }
+        if switching {
             if let t = s.title.map(Self.clean), !t.isEmpty, !Self.generic(t) { return t }
             return s.prompt ?? s.project
         }
-        switch r.state {
+        switch state {
         case .question: return "Waiting for you"
         case .working: return s.action ?? "Thinking…"
         case .done, .idle: return s.state == .done ? "Finished " + Self.ago(s.updated) : "Idle"

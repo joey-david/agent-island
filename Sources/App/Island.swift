@@ -558,7 +558,7 @@ final class IslandController: NSObject {
             let i = ss.firstIndex { $0.key == selected[a.id] } ?? 0
             let s = ss.isEmpty ? nil : ss[i]
             return TrayView.Row(agent: a, state: s.map(store.displayState) ?? sum.state, session: s, usage: Usage.read(a.id),
-                                states: ss.map(store.displayState), keys: ss.map(\.key), selected: i, focused: keyFocus == a.id,
+                                states: ss.map(store.displayState), sessions: ss, keys: ss.map(\.key), selected: i, focused: keyFocus == a.id,
                                 switching: ss.count > 1 && selected[a.id] != nil)
         }
     }
@@ -579,7 +579,7 @@ final class IslandController: NSObject {
         // Rebuild only when something visible changed.
         let key = "\(side)|\(r)|" + rows.map {
             "\($0.agent.id)\($0.state)\($0.keys)\($0.states)\($0.selected)\($0.focused)\($0.switching)\($0.session?.action ?? "")\($0.session?.title ?? "")\($0.session?.prompt ?? "")\(Int($0.usage?.fiveHour ?? -1))"
-        }.joined(separator: "|")
+        }.joined(separator: "|") + "\(rows.map(TrayView.width))"
         guard key != trayKey else { return }
         let fresh = tray == nil || !trayKey.hasPrefix("\(side)|")
         trayKey = key
