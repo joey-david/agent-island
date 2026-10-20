@@ -3,14 +3,14 @@ import Darwin
 /// Just enough process inspection to see through Codex's shared app-server daemon:
 /// its hooks all come from the daemon, so we find the terminal `codex` each session belongs to.
 enum Procs {
-    struct Info { let pid: pid_t; let comm: String; let tty: dev_t; let start: UInt64 }
+    struct Info { let pid: pid_t; let ppid: pid_t; let comm: String; let tty: dev_t; let start: UInt64 }
 
     static func info(_ pid: pid_t) -> Info? {
         var bi = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bi, size) == size else { return nil }
         let comm = withUnsafeBytes(of: bi.pbi_comm) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
-        return Info(pid: pid, comm: comm, tty: dev_t(bitPattern: bi.e_tdev), start: bi.pbi_start_tvsec)
+        return Info(pid: pid, ppid: pid_t(bi.pbi_ppid), comm: comm, tty: dev_t(bitPattern: bi.e_tdev), start: bi.pbi_start_tvsec)
     }
 
     static func path(_ pid: pid_t) -> String {
@@ -34,6 +34,13 @@ enum Procs {
     }
 
     static func isSharedDaemon(_ pid: pid_t) -> Bool { path(pid).contains("/app-server-daemon/") }
+
+    /// Claude Code's background daemon keeps warm sessions under a pty host that is itself
+    /// claude; a terminal-launched claude's parent is a shell.
+    static func isBackgroundHosted(_ pid: pid_t) -> Bool {
+        guard let parent = info(pid)?.ppid, parent > 1 else { return false }
+        return path(parent).contains("claude-code")
+    }
 
     /// Codex TUIs: a `codex` binary on a terminal, other than the daemon.
     static func codexClients() -> [Info] {

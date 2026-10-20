@@ -21,6 +21,8 @@ final class Session: Codable {
     var prompt: String?
     var action: String?
     var title: String?
+    /// Started by Claude Code's background daemon rather than in a terminal.
+    var hosted: Bool?
 
     init(agent: String, id: String, pid: Int32) { self.agent = agent; self.id = id; self.pid = pid }
     var key: String { agent + "/" + id }
@@ -151,6 +153,7 @@ final class SessionStore {
         s.cwd = p["cwd"] as? String ?? msg["cwd"] as? String ?? s.cwd
         if pid > 1 {
             if Procs.isSharedDaemon(pid) { adoptClient(s) } else { s.pid = pid }
+            if s.hosted == nil { s.hosted = Procs.isBackgroundHosted(s.pid) }
             watchExit(s.pid)
         }
         s.tty = msg["tty"] as? String ?? s.tty
@@ -241,7 +244,8 @@ final class SessionStore {
     // MARK: queries
 
     func sessions(of agent: String) -> [Session] {
-        sessions.values.filter { $0.agent == agent }.sorted { a, b in
+        // A daemon's warm spare counts once someone gives it work.
+        sessions.values.filter { $0.agent == agent && ($0.hosted != true || $0.prompt != nil) }.sorted { a, b in
             let pa = pending.contains { $0.session === a }, pb = pending.contains { $0.session === b }
             if pa != pb { return pa }
             if displayRank(a) != displayRank(b) { return displayRank(a) > displayRank(b) }
@@ -340,6 +344,7 @@ final class SessionStore {
         for s in all where s.pid > 1 && (kill(s.pid, 0) == 0 || errno == EPERM) {
             // Whatever it was doing, we missed it; the next event corrects this.
             if s.state != .done { s.state = .idle }
+            if s.hosted == nil { s.hosted = Procs.isBackgroundHosted(s.pid) }
             sessions[s.key] = s
         }
         // Daemon-hosted sessions from before: keep only those whose terminal client still runs.
