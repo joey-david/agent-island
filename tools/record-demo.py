@@ -261,19 +261,16 @@ def zoom_out(after=0.0):
     MARKS[-1][1] = now()
 
 
-def zoom_filter(z=1.35, ease=0.7):
-    """zoompan expression: a smoothstep ramp into each marked stretch and back out, toward the top
-    middle of the screen where the notch is."""
-    parts = []
-    for a, b in MARKS:
+def zoom_filter(stretches, ease=0.7):
+    """zoompan expression: a smoothstep ramp into each (start, end, zoom) stretch and back out, toward
+    the top middle of the screen where the notch is."""
+    e = "0"
+    for a, b, z in stretches:
         up = f"clip((in_time-{a - ease:.2f})/{ease},0,1)"
         down = f"clip(({b + ease:.2f}-in_time)/{ease},0,1)"
-        parts.append(f"min({up},{down})")
-    e = "0"
-    for p in parts:
-        e = f"max({e},{p})"
-    smooth = f"({e})*({e})*(3-2*({e}))"
-    return f"zoompan=z='1+{z - 1}*{smooth}':x='(iw-iw/zoom)/2':y='0':d=1:fps=30:s=1440x936"
+        k = f"min({up},{down})"
+        e = f"max({e},{z - 1}*{k}*{k}*(3-2*{k}))"
+    return f"zoompan=z='1+{e}':x='(iw-iw/zoom)/2':y='0':d=1:fps=30:s=1440x936"
 
 
 def cue(scene, name):
@@ -461,8 +458,8 @@ def encode():
     MARKS[:] = m["zoom"]
     out = os.path.join(ROOT, "docs")
     W, nh = NOTCH[2], NOTCH[3]
-    # The recording can't see the hardware notch, so draw it in: without it the island reads as
-    # a black bar for no reason. A pulse of glow around the island marks each mascot popping out.
+    # The recording can't see the hardware notch, so draw it in, camera and faint rim included:
+    # without it the island reads as a black bar for no reason. A pulse of glow around the island marks each mascot popping out.
     notch = os.path.join(D, "notch.png")
     run(DIRECTOR, "notch", notch, str(W), "80", "2", str(NOTCH[0]), str(NOTCH[1]), str(nh))
     inputs, graph, last = ["-i", notch], [], "v"
@@ -473,7 +470,12 @@ def encode():
         graph.append(f"[{k + 2}]format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*pow(sin(PI*T/0.8),2)',"
                      f"setpts=PTS-STARTPTS+{t:.2f}/TB[g{k}];[{last}][g{k}]overlay=eof_action=pass:enable='between(t,{t:.2f},{t + 1.6:.2f})'[o{k}]")
         last = f"o{k}"
-    graph = [f"[0]fps=30,setpts=PTS-STARTPTS[v]"] + graph + [f"[{last}][1]overlay,{zoom_filter()}"]
+    # Closer in while the island is busy, and closer still as the first mascots pop out, which is
+    # otherwise easy to miss while the terminals open.
+    stretches = [(a, b, 1.8) for a, b in MARKS]
+    if m["glow"]:
+        stretches.append((m["glow"][0][0] - 0.4, m["glow"][-1][0] + 1.4, 2.2))
+    graph = [f"[0]fps=30,setpts=PTS-STARTPTS[v]"] + graph + [f"[{last}][1]overlay,{zoom_filter(stretches)}"]
     trim = ["-ss", str(TRIM), "-to", "%.2f" % (m["end"] - 0.3), "-i", RAW]
     mp4, gif = os.path.join(out, "demo.mp4"), os.path.join(out, "demo.gif")
     # Zoom from the full-resolution capture, so zoomed stretches stay sharp at 1440 wide.

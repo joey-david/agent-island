@@ -108,6 +108,26 @@ case "notch":
     }
     ctx.addPath(p)
     ctx.fillPath()
+    if a.count <= 9 {
+        // A faint rim along the sides and bottom (not the screen edge), so the notch still shows
+        // inside the island as it grows, and the camera in the middle.
+        let rim = CGMutablePath()
+        rim.move(to: CGPoint(x: minX - ear, y: 0))
+        rim.addQuadCurve(to: CGPoint(x: minX, y: ear), control: CGPoint(x: minX, y: 0))
+        rim.addLine(to: CGPoint(x: minX, y: bottom - R))
+        rim.addCurve(to: CGPoint(x: minX + R, y: bottom), control1: CGPoint(x: minX, y: bottom - R * 0.45), control2: CGPoint(x: minX + R * 0.45, y: bottom))
+        rim.addLine(to: CGPoint(x: maxX - R, y: bottom))
+        rim.addCurve(to: CGPoint(x: maxX, y: bottom - R), control1: CGPoint(x: maxX - R * 0.45, y: bottom), control2: CGPoint(x: maxX, y: bottom - R * 0.45))
+        rim.addLine(to: CGPoint(x: maxX, y: ear))
+        rim.addQuadCurve(to: CGPoint(x: maxX + ear, y: 0), control: CGPoint(x: maxX, y: 0))
+        ctx.addPath(rim); ctx.setStrokeColor(gray: 0.22, alpha: 1); ctx.setLineWidth(1); ctx.strokePath()
+        let c = CGPoint(x: (minX + maxX) / 2, y: nh / 2)
+        let lens = { (r: Double) in CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r) }
+        ctx.setFillColor(red: 0.13, green: 0.14, blue: 0.18, alpha: 1); ctx.fillEllipse(in: lens(4))
+        ctx.setFillColor(red: 0.03, green: 0.03, blue: 0.05, alpha: 1); ctx.fillEllipse(in: lens(2.6))
+        ctx.setFillColor(red: 0.2, green: 0.24, blue: 0.36, alpha: 0.9)
+        ctx.fillEllipse(in: CGRect(x: c.x - 1.4, y: c.y - 1.4, width: 1, height: 1))
+    }
     let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: a[2]) as CFURL, "public.png" as CFString, 1, nil)!
     CGImageDestinationAddImage(dest, ctx.makeImage()!, nil)
     CGImageDestinationFinalize(dest)
