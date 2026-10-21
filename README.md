@@ -22,3 +22,5 @@ Needs Apple silicon, macOS 14+ and the Xcode Command Line Tools.
 ---
 
 Made by Joey ([@t0rt0ised](https://x.com/t0rt0ised)).
+
+Apache 2.0 licensed. If you ship something built from it, keep the [NOTICE](NOTICE) file with it.
