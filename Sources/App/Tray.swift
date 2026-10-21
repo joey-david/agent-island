@@ -197,7 +197,9 @@ final class TrayView: NSView {
     private static func detailText(_ session: Session?, _ state: AgentState, switching: Bool) -> String {
         guard let s = session else { return "" }
         if switching {
-            if let t = s.title.map(Self.clean), !t.isEmpty, !Self.generic(t) { return t }
+            // Codex titles its terminal "<task> | <directory>".
+            if s.parent == nil, let t = s.title.map({ Self.clean($0).replacingOccurrences(of: " | " + s.project, with: "") }),
+               !t.isEmpty, !Self.generic(t), t != s.project { return t }
             return s.prompt ?? s.project
         }
         switch state {

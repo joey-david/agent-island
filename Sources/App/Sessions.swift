@@ -23,11 +23,15 @@ final class Session: Codable {
     var title: String?
     /// Started by Claude Code's background daemon rather than in a terminal.
     var hosted: Bool?
+    /// Codex sub-agent: the thread that spawned it. It shares that thread's terminal.
+    var parent: String?
 
     init(agent: String, id: String, pid: Int32) { self.agent = agent; self.id = id; self.pid = pid }
     var key: String { agent + "/" + id }
     var project: String { cwd.map { ($0 as NSString).lastPathComponent } ?? String(id.prefix(8)) }
     var inGhostty: Bool { term == "ghostty" || bundle == Focus.ghostty }
+    /// A Codex thread run from the ChatGPT app rather than a terminal.
+    var inChatGPT: Bool { bundle == Focus.chatgpt }
 }
 
 struct Question {
@@ -78,6 +82,9 @@ final class SessionStore {
     private var exits: [Int32: DispatchSourceProcess] = [:]
     private var saveQueued = false
     private var lingerToken = 0
+    /// Codex's approval reviewers: internal threads, not agents you started.
+    private var ignored = Set<String>()
+    private var pendingMeta: [String: (parent: String?, app: Bool)] = [:]
     private static let url = islandHome.appendingPathComponent("sessions.json")
     init(config: ConfigStore) {
         self.config = config
@@ -141,6 +148,16 @@ final class SessionStore {
         let emitted = msg["state"] as? String
         Self.debug("\(agent) \(event) \(sid) wait=\(msg["wait"] as? Bool ?? false) term=\(msg["term"] as? String ?? "-") bundle=\(msg["bundle"] as? String ?? "-")")
 
+        if sessions[key] == nil, !ignored.contains(key) {
+            let meta = Self.threadMeta(p["transcript_path"] as? String)
+            if meta.source == "guardian_review" { ignored.insert(key) } else { pendingMeta[key] = (meta.parent, meta.app) }
+        }
+        if (p["prompt"] as? String)?.hasPrefix("The following is the Codex agent history") == true {
+            ignored.insert(key)
+            if sessions[key] != nil { remove(key); changed() }
+        }
+        if ignored.contains(key) { return conn.respond("") }
+
         if event == "SessionEnd" || emitted == "end" {
             remove(key)
             conn.respond("")
@@ -149,9 +166,19 @@ final class SessionStore {
 
         let s = sessions[key] ?? Session(agent: agent, id: sid, pid: pid)
         sessions[key] = s
+        if let meta = pendingMeta.removeValue(forKey: key) {
+            s.parent = meta.parent
+            // Its hooks come from the shared daemon like a terminal's, so tie it to the app instead
+            // of a terminal `codex`, and only show it once it has been given work.
+            if meta.app { s.bundle = Focus.chatgpt; s.hosted = true }
+        }
+        if let parent = s.parent, let owner = sessions[agent + "/" + parent] {
+            s.terminalID = owner.terminalID
+            s.term = s.term ?? owner.term
+        }
         s.cwd = p["cwd"] as? String ?? msg["cwd"] as? String ?? s.cwd
         if pid > 1 {
-            if Procs.isSharedDaemon(pid) { adoptClient(s) } else { s.pid = pid }
+            if s.inChatGPT { s.pid = Focus.pid(Focus.chatgpt) ?? pid } else if Procs.isSharedDaemon(pid) { adoptClient(s) } else { s.pid = pid }
             if s.hosted == nil { s.hosted = Procs.isBackgroundHosted(s.pid) }
             watchExit(s.pid)
         }
@@ -164,13 +191,13 @@ final class SessionStore {
         let wait = msg["wait"] as? Bool ?? false
         switch event {
         case "SessionStart":
-            Focus.captureTerminal(s)
+            if s.parent == nil { Focus.captureTerminal(s) }
         case "UserPromptSubmit":
             s.state = .working
             s.seen = true
             s.action = nil
-            if let text = p["prompt"] as? String { s.prompt = Self.firstLine(text) }
-            Focus.captureTerminal(s)
+            if let text = p["prompt"] as? String, let line = Self.request(text) { s.prompt = line }
+            if s.parent == nil { Focus.captureTerminal(s) }
         case "Notification":
             let type = p["notification_type"] as? String ?? ""
             if type == "permission_prompt" || type == "elicitation_dialog" { s.state = .question }
@@ -326,16 +353,24 @@ final class SessionStore {
     /// One wakeup at the next "done" expiry, none while nothing is pending.
     private func scheduleLinger() {
         let linger = config.config.doneLinger ?? 1200
-        let next = sessions.values.filter { $0.state == .done && !$0.seen }.map { $0.updated.addingTimeInterval(linger) }.min()
+        let next = sessions.values.filter(lingers).map { $0.updated.addingTimeInterval(linger) }.min()
         lingerToken += 1
         guard let next else { return }
         let token = lingerToken
         DispatchQueue.main.asyncAfter(deadline: .now() + max(1, next.timeIntervalSinceNow)) { [weak self] in
             guard let self, token == self.lingerToken else { return }
             let now = Date()
-            for s in self.sessions.values where s.state == .done && !s.seen && s.updated.addingTimeInterval(linger) <= now { s.seen = true }
+            for s in self.sessions.values where self.lingers(s) && s.updated.addingTimeInterval(linger) <= now {
+                if s.inChatGPT { self.remove(s.key) } else { s.seen = true }
+            }
             self.changed()
         }
+    }
+
+    /// Unread finished work fades to read after a while. ChatGPT threads have no terminal to keep
+    /// them around, so once they are finished (or left idle) they leave after the same while.
+    private func lingers(_ s: Session) -> Bool {
+        s.inChatGPT ? s.state == .done || s.state == .idle : s.state == .done && !s.seen
     }
 
     private func restore() {
@@ -377,6 +412,36 @@ final class SessionStore {
             return Question(header: q["header"] as? String ?? "", text: q["question"] as? String ?? "",
                             options: opts.map { (label: $0.0, detail: $0.1) }, multi: q["multiSelect"] as? Bool ?? false)
         }
+    }
+
+    /// The user's request inside a prompt, past the context blocks Codex prepends
+    /// ("# Files mentioned by the user:", "<environment_context>…", AGENTS.md).
+    static func request(_ text: String) -> String? {
+        var body = text
+        if let r = body.range(of: "## My request for Codex:", options: .backwards) { body = String(body[r.upperBound...]) }
+        body = body.replacingOccurrences(of: "<([A-Za-z_][\\w-]*)[^>]*>[\\s\\S]*?</\\1>", with: "", options: .regularExpression)
+        let line = body.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty && !$0.hasPrefix("#") && !$0.hasPrefix("<") }
+        return line.map { String($0.prefix(120)) }
+    }
+
+    /// Codex records a thread's origin on the first line of its transcript.
+    /// The ChatGPT app's threads say so in their originator ("codex_work_desktop", "Codex Desktop").
+    static func threadMeta(_ path: String?) -> (source: String?, parent: String?, app: Bool) {
+        guard let path, let h = FileHandle(forReadingAtPath: path) else { return (nil, nil, false) }
+        defer { try? h.close() }
+        // The whole first line: base instructions can come before these fields and run to tens of KB.
+        var head = Data()
+        while head.count < 1 << 20, let chunk = try? h.read(upToCount: 65536), !chunk.isEmpty {
+            head.append(chunk)
+            if chunk.contains(UInt8(ascii: "\n")) { break }
+        }
+        let text = String(decoding: head.prefix { $0 != UInt8(ascii: "\n") }, as: UTF8.self)
+        func field(_ name: String) -> String? {
+            guard let r = text.range(of: "\"\(name)\":\"([^\"]*)\"", options: .regularExpression) else { return nil }
+            return text[r].split(separator: "\"").dropFirst(2).first.map(String.init)
+        }
+        return (field("thread_source"), field("parent_thread_id"), field("originator")?.lowercased().contains("desktop") == true)
     }
 
     static func firstLine(_ text: String) -> String {

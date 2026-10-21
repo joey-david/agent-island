@@ -3,6 +3,7 @@ import AppKit
 /// Bringing a session's chat to the front: its Ghostty terminal, or the app it runs in.
 enum Focus {
     static let ghostty = "com.mitchellh.ghostty"
+    static let chatgpt = "com.openai.codex"
     private static let queue = DispatchQueue(label: "island.applescript")
 
     @discardableResult
@@ -78,12 +79,16 @@ enum Focus {
             return
         }
         if s.term == nil, let t = agent?.url,
-           let url = URL(string: t.replacingOccurrences(of: "{session}", with: s.id)
+           let url = URL(string: t.replacingOccurrences(of: "{session}", with: s.parent ?? s.id)
                .replacingOccurrences(of: "{cwd}", with: s.cwd?.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "")) {
             NSWorkspace.shared.open(url)
             return
         }
         if let b = s.bundle ?? agent?.app { activate(b) }
+    }
+
+    static func pid(_ bundle: String) -> Int32? {
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first?.processIdentifier
     }
 
     static func activate(_ bundle: String) {

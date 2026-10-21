@@ -525,7 +525,7 @@ final class IslandController: NSObject {
     private func refreshTitles() {
         Focus.titles { [weak self] titles in
             guard let self, !titles.isEmpty else { return }
-            for s in self.store.sessions.values where s.inGhostty {
+            for s in self.store.sessions.values where s.inGhostty && s.parent == nil {
                 if s.terminalID == nil {
                     // Not seen being typed into yet: adopt the only terminal sitting in its directory.
                     let here = titles.filter { Focus.same($0.cwd, s.cwd) }
