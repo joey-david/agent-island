@@ -1,14 +1,20 @@
 # Topnotchers
 
-A macOS app that shows your Claude Code and Codex sessions next to the notch.
+A minimal notch monitor for Claude Code and Codex on macOS.
 
 ![Topnotchers demo](docs/demo.gif)
 
-Each session gets a small pet that animates while the agent works, shows an orange dot when it
-asks you something, and a green one when it's done. Questions and permission prompts open under
-the notch, so you can answer without finding the terminal. Clicking a pet focuses its Ghostty tab.
+The island uses the notch's own black and shape, so it reads as part of the hardware, and with no
+agent running there is nothing on screen. Each session adds a small pixel pet beside the notch. It
+animates while the agent works, gets an orange dot when it asks you something and a green one when
+it's done. Hover a pet to see the task and what the agent is doing right now.
 
-It's native AppKit and optimized to consume almost no resources (uses about 42 MB of memory at peak usage), with no measurable CPU when nothing is happening.
+Questions and permission prompts drop down under the notch, so you can answer without finding the
+terminal. Clicking a pet focuses its Ghostty tab, or opens the thread in ChatGPT for Codex sessions
+started there.
+
+It's native AppKit: about 42 MB of memory at peak, no measurable CPU when nothing is happening, no
+Dock icon, no account and no network access.
 
 ## Install
 
