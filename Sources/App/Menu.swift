@@ -69,6 +69,8 @@ final class MenuController: NSObject, NSMenuDelegate {
             case .working: it.image = dot(.systemBlue)
             case .done: it.image = dot(.systemGreen)
             case .idle: it.image = dot(NSColor(white: 0.5, alpha: 1))
+            case .interrupted: it.image = dot(NSColor(white: 0.75, alpha: 1))
+            case .limited: it.image = dot(.systemRed)
             }
             m.addItem(it)
         }
@@ -135,7 +137,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Add Agent"
-        alert.informativeText = "Agents report through:\n~/.topnotchers/bin/topnotchers-hook --agent <id>\n(hook JSON on stdin, or: topnotchers-hook emit --agent <id> --state working|question|done|end)"
+        alert.informativeText = "Agents report through:\n~/.topnotchers/bin/topnotchers-hook --agent <id>\n(hook JSON on stdin, or: topnotchers-hook emit --agent <id> --state working|question|done|interrupted|limited|end)"
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.placeholderString = "id, e.g. gemini"
         alert.accessoryView = field

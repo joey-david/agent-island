@@ -218,7 +218,7 @@ final class IslandController: NSObject {
         }
         let pending = store.pending.first
         let show = !sides[.left]!.isEmpty || !sides[.right]!.isEmpty || pending != nil
-        let done = Set(store.sessions.values.filter { store.displayState($0) == .done }.map(\.key))
+        let done = Set(store.sessions.values.filter { [.done, .limited].contains(store.displayState($0)) }.map(\.key))
         if !done.subtracting(finished).isEmpty && !menuBarDown { flash() }
         finished = done
         hush(!menuBarDown && pending == nil && Date() >= flashUntil)
@@ -405,6 +405,8 @@ final class IslandController: NSObject {
         case .working: anim = .working
         case .done: anim = .done
         case .idle: anim = .idle
+        case .interrupted: anim = .interrupted
+        case .limited: anim = .limited
         }
         if slot.anim != anim {
             slot.anim = anim
@@ -426,8 +428,8 @@ final class IslandController: NSObject {
             pulse.repeatCount = .infinity
             pulse.preferredFrameRateRange = CAFrameRateRange(minimum: 8, maximum: 15, preferred: 15)
             slot.dot.add(pulse, forKey: "pulse")
-        case .done:
-            slot.dot.backgroundColor = NSColor.systemGreen.cgColor
+        case .done, .interrupted, .limited:
+            slot.dot.backgroundColor = Self.color(state, tint: .white).cgColor
             slot.dot.opacity = 1
         default:
             slot.dot.opacity = 0
@@ -440,6 +442,8 @@ final class IslandController: NSObject {
         case .working: return tint
         case .done: return .systemGreen
         case .idle: return NSColor(white: 1, alpha: 0.28)
+        case .interrupted: return NSColor(white: 1, alpha: 0.7)
+        case .limited: return .systemRed
         }
     }
 
@@ -455,6 +459,12 @@ final class IslandController: NSObject {
             l.add(track(s, .done, repeats: 2), forKey: "once")
         case .idle:
             l.add(track(s, .idle, repeats: 2), forKey: "frames")
+        case .interrupted, .limited:
+            // Once through, then hold the last pose until the next turn.
+            let k = track(s, anim, repeats: 1)
+            k.fillMode = .forwards
+            k.isRemovedOnCompletion = false
+            l.add(k, forKey: "once")
         default:
             l.add(track(s, anim, repeats: .infinity), forKey: "frames")
         }
@@ -504,7 +514,7 @@ final class IslandController: NSObject {
         }
         // Rebuild only when something visible changed.
         let key = "\(side)|\(r)|" + rows.map {
-            "\($0.agent.id)\($0.state)\($0.keys)\($0.states)\($0.selected)\($0.focused)\($0.switching)\($0.session?.action ?? "")\($0.session?.title ?? "")\($0.session?.prompt ?? "")\(Int($0.usage?.fiveHour ?? -1))"
+            "\($0.agent.id)\($0.state)\($0.keys)\($0.states)\($0.selected)\($0.focused)\($0.switching)\($0.session?.action ?? "")\($0.session?.title ?? "")\($0.session?.prompt ?? "")\($0.usage.map { "\($0.binding.label)\(Int($0.binding.used))" } ?? "")\($0.session?.reason ?? "")"
         }.joined(separator: "|") + "\(rows.map(TrayView.width))"
         guard key != trayKey else { return }
         let fresh = tray == nil || !trayKey.hasPrefix("\(side)|")

@@ -1,7 +1,7 @@
 import AppKit
 import ImageIO
 
-enum Anim { case idle, working, question, done }
+enum Anim { case idle, working, question, done, interrupted, limited }
 
 /// All of a sprite's frames side by side in one small strip, so an animation is
 /// just a discrete `contentsRect` keyframe track the render server plays itself.
@@ -109,16 +109,18 @@ enum PetAtlas {
     private static let rows: [(row: Int, ms: [Double])] = [
         (0, [1200, 110, 110, 140, 140, 700]),        // idle, resting longer between fidgets
         (4, [140, 140, 140, 140, 280]),               // jumping
+        (5, [90, 90, 120, 120, 90, 90, 120, 160]),    // failed: a flustered shake
         (6, [150, 150, 150, 150, 150, 260]),          // waiting
         (7, [120, 120, 120, 120, 120, 220]),          // running
+        (9, [260, 160, 160, 160, 200, 260, 320, 1]),  // flopping over, out of steam
     ]
-    private static let map: [Anim: Int] = [.idle: 0, .done: 4, .question: 6, .working: 7]
+    private static let map: [Anim: Int] = [.idle: 0, .done: 4, .interrupted: 5, .question: 6, .working: 7, .limited: 9]
     static let height = 96
 
     /// Prepared strips are cached as small PNGs, so later launches skip decoding the full atlas.
     private static func cacheURL(_ url: URL) -> URL {
         let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)?.timeIntervalSince1970 ?? 0
-        let name = url.deletingPathExtension().lastPathComponent + "-\(Int(mtime))-h\(height)-v1.png"
+        let name = url.deletingPathExtension().lastPathComponent + "-\(Int(mtime))-h\(height)-v2.png"
         return islandHome.appendingPathComponent("cache").appendingPathComponent(name)
     }
 
@@ -130,6 +132,8 @@ enum PetAtlas {
             i += ms.count
             for (anim, r) in map where r == row { anims[anim] = seq }
         }
+        // Interrupted: shake it off, then settle with eyes closed (idle's blink frame).
+        anims[.interrupted]?.append((frame: 1, ms: 1))
         return Sprite(image: strip, frameCount: i, pixelated: false, tempo: 2.2, anims: anims)
     }
 
@@ -211,12 +215,19 @@ enum PixelPet {
         var leftUp = false, rightUp = false
         var legs = 0          // 0 planted, 1 stepping, -1 tucked
         var crouch = false
+        var slump = false     // melted flat, arms out
     }
 
     private static let W = 20, H = 9, sx = 4, sy = 8
 
     private static func pixels(_ p: Pose) -> Set<[Int]> {
         var px = Set<[Int]>()
+        if p.slump {
+            for r in 5...7 { for c in 3...14 { px.insert([c, r]) } }
+            for c in [1, 2, 15, 16] { px.insert([c, 7]) }
+            px.remove([5, 6]); px.remove([12, 6])
+            return px
+        }
         let top = 3 + p.dy + (p.crouch ? 1 : 0)
         let torso = p.crouch ? 3 : 4
         for r in 0..<torso { for c in 3...14 { px.insert([c, top + r]) } }
@@ -255,7 +266,16 @@ enum PixelPet {
                          (P { $0.dy = -3; $0.legs = -1; $0.leftUp = true; $0.rightUp = true; $0.eyes = .shut }, 240),
                          (P { $0.dy = -2; $0.legs = -1; $0.leftUp = true; $0.rightUp = true; $0.eyes = .shut }, 130),
                          (P { $0.crouch = true }, 160), (Pose(), 400)]
-        let all: [(Anim, [F])] = [(.idle, idle), (.working, working), (.question, question), (.done, done)]
+        // Played once; the last pose holds.
+        let interrupted: [F] = [(P { $0.crouch = true; $0.eyes = .shut }, 110),
+                                (P { $0.dy = -1; $0.leftUp = true; $0.rightUp = true; $0.eyes = .up }, 420),
+                                (P { $0.leftUp = true; $0.rightUp = true; $0.eyes = .shut }, 120),
+                                (P { $0.leftUp = true; $0.rightUp = true; $0.eyes = .up }, 360),
+                                (P { $0.eyes = .shut }, 1)]
+        let limited: [F] = [(P { $0.eyes = .left }, 380), (P { $0.eyes = .right }, 380), (P { $0.eyes = .shut }, 300),
+                            (P { $0.crouch = true; $0.eyes = .shut }, 420), (P { $0.slump = true }, 1)]
+        let all: [(Anim, [F])] = [(.idle, idle), (.working, working), (.question, question), (.done, done),
+                                  (.interrupted, interrupted), (.limited, limited)]
         let total = all.reduce(0) { $0 + $1.1.count }
         let fw = W * sx, fh = H * sy
         let ctx = CGContext(data: nil, width: fw * total, height: fh, bitsPerComponent: 8, bytesPerRow: 0,

@@ -1,8 +1,10 @@
 import AppKit
 
 enum AgentState: Int, Codable, Comparable {
-    case idle, done, working, question
-    static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
+    // Raw values are saved in sessions.json; urgency is `rank`.
+    case idle, done, working, question, interrupted, limited
+    private var rank: Int { [0, 2, 4, 5, 1, 3][rawValue] }
+    static func < (a: Self, b: Self) -> Bool { a.rank < b.rank }
 }
 
 final class Session: Codable {
@@ -25,6 +27,10 @@ final class Session: Codable {
     var hosted: Bool?
     /// Codex sub-agent: the thread that spawned it. It shares that thread's terminal.
     var parent: String?
+    var transcript: String?
+    /// Why an interrupted turn stopped, when it wasn't you; and when a usage limit lifts.
+    var reason: String?
+    var limitResets: Date?
 
     init(agent: String, id: String, pid: Int32) { self.agent = agent; self.id = id; self.pid = pid }
     var key: String { agent + "/" + id }
@@ -80,6 +86,7 @@ final class SessionStore {
     var onChange: (() -> Void)?
     private let config: ConfigStore
     private var exits: [Int32: DispatchSourceProcess] = [:]
+    private var watches: [String: TranscriptWatch] = [:]
     private var saveQueued = false
     private var lingerToken = 0
     /// Codex's approval reviewers: internal threads, not agents you started.
@@ -185,6 +192,7 @@ final class SessionStore {
         s.tty = msg["tty"] as? String ?? s.tty
         s.term = msg["term"] as? String ?? s.term
         s.bundle = msg["bundle"] as? String ?? s.bundle
+        s.transcript = p["transcript_path"] as? String ?? s.transcript
         s.updated = Date()
 
         var made: Pending?
@@ -196,6 +204,8 @@ final class SessionStore {
             s.state = .working
             s.seen = true
             s.action = nil
+            s.reason = nil
+            s.limitResets = nil
             if let text = p["prompt"] as? String, let line = Self.request(text) { s.prompt = line }
             if s.parent == nil { Focus.captureTerminal(s) }
         case "Notification":
@@ -215,6 +225,9 @@ final class SessionStore {
         case "Stop", "Interrupt":
             s.state = .done
             s.seen = false
+        case "StopFailure":
+            let error = p["error"] as? String ?? "unknown"
+            if error == "rate_limit" || error == "billing_error" { limit(s) } else { stop(s, why: TranscriptWatch.reason(error)) }
         case "emit":
             if let t = msg["prompt"] as? String { s.prompt = t }
             if let t = msg["action"] as? String { s.action = t }
@@ -222,6 +235,8 @@ final class SessionStore {
             case "working": s.state = .working
             case "question": s.state = .question
             case "done": s.state = .done; s.seen = false
+            case "interrupted": stop(s, why: nil)
+            case "limited": limit(s)
             default: s.state = .idle
             }
         default: // PostToolUse, SubagentStart, PreCompact, ...
@@ -229,6 +244,7 @@ final class SessionStore {
             if !pending.contains(where: { $0.session === s }) { s.state = .working }
         }
 
+        follow(s)
         if let made {
             pending.append(made)
             conn.onHangup = { [weak self, weak made] in
@@ -244,6 +260,35 @@ final class SessionStore {
             conn.respond("")
         }
         changed()
+    }
+
+    private func stop(_ s: Session, why: String?) {
+        s.state = .interrupted
+        s.reason = why
+        dropPending(s)
+    }
+
+    /// Out of usage until the window that ran out resets, when we can tell which one.
+    private func limit(_ s: Session) {
+        s.state = .limited
+        s.limitResets = Usage.read(s.agent, fresh: true).flatMap { $0.binding.resets }.flatMap { $0 > Date() ? $0 : nil }
+        dropPending(s)
+    }
+
+    /// A busy session's transcript is followed for interruptions and limits; nothing else is.
+    private func follow(_ s: Session) {
+        let want = s.state == .working || s.state == .question ? s.transcript : nil
+        if watches[s.key]?.path == want { return }
+        watches[s.key] = want.flatMap {
+            TranscriptWatch(path: $0) { [weak self, weak s] stop in
+                guard let self, let s, s.state == .working || s.state == .question else { return }
+                Self.debug("\(s.agent) transcript \(stop) \(s.id)")
+                if case .interrupted(let why) = stop { self.stop(s, why: why) } else { self.limit(s) }
+                s.updated = Date()
+                self.follow(s)
+                self.changed()
+            }
+        }
     }
 
     func answer(_ p: Pending, output: String) {
@@ -274,7 +319,8 @@ final class SessionStore {
         sessions.values.filter { $0.agent == agent && ($0.hosted != true || $0.prompt != nil) }.sorted { a, b in
             let pa = pending.contains { $0.session === a }, pb = pending.contains { $0.session === b }
             if pa != pb { return pa }
-            if displayRank(a) != displayRank(b) { return displayRank(a) > displayRank(b) }
+            let sa = displayState(a), sb = displayState(b)
+            if sa != sb { return sa > sb }
             return a.updated > b.updated
         }
     }
@@ -292,12 +338,15 @@ final class SessionStore {
         return s.state
     }
 
-    private func displayRank(_ s: Session) -> Int { displayState(s).rawValue }
-
     // MARK: lifetime
 
     private func remove(_ key: String) {
         guard let s = sessions.removeValue(forKey: key) else { return }
+        watches.removeValue(forKey: key)
+        dropPending(s)
+    }
+
+    private func dropPending(_ s: Session) {
         for p in pending where p.session === s { p.conn.respond("") }
         pending.removeAll { $0.session === s }
     }
@@ -350,34 +399,46 @@ final class SessionStore {
         }
     }
 
-    /// One wakeup at the next "done" expiry, none while nothing is pending.
+    /// One wakeup at the next expiry, none while nothing is pending.
     private func scheduleLinger() {
-        let linger = config.config.doneLinger ?? 1200
-        let next = sessions.values.filter(lingers).map { $0.updated.addingTimeInterval(linger) }.min()
+        let next = sessions.values.compactMap(expiry).min()
         lingerToken += 1
         guard let next else { return }
         let token = lingerToken
         DispatchQueue.main.asyncAfter(deadline: .now() + max(1, next.timeIntervalSinceNow)) { [weak self] in
             guard let self, token == self.lingerToken else { return }
             let now = Date()
-            for s in self.sessions.values where self.lingers(s) && s.updated.addingTimeInterval(linger) <= now {
-                if s.inChatGPT { self.remove(s.key) } else { s.seen = true }
+            for s in self.sessions.values where self.expiry(s).map({ $0 <= now }) == true {
+                if s.state == .limited {
+                    s.state = .idle
+                    s.limitResets = nil
+                    s.updated = now
+                } else if s.inChatGPT {
+                    self.remove(s.key)
+                } else if s.state == .interrupted {
+                    s.state = .idle
+                } else {
+                    s.seen = true
+                }
             }
             self.changed()
         }
     }
 
-    /// Unread finished work fades to read after a while. ChatGPT threads have no terminal to keep
-    /// them around, so once they are finished (or left idle) they leave after the same while.
-    private func lingers(_ s: Session) -> Bool {
-        s.inChatGPT ? s.state == .done || s.state == .idle : s.state == .done && !s.seen
+    /// Unread finished work fades to read after a while, and an interrupted turn to idle. ChatGPT
+    /// threads have no terminal to keep them around, so once they are finished (or left idle) they
+    /// leave after the same while. A usage limit holds until it resets.
+    private func expiry(_ s: Session) -> Date? {
+        if s.state == .limited { return s.limitResets }
+        let fades = s.inChatGPT ? [.done, .idle, .interrupted].contains(s.state) : s.state == .interrupted || s.state == .done && !s.seen
+        return fades ? s.updated.addingTimeInterval(config.config.doneLinger ?? 1200) : nil
     }
 
     private func restore() {
         guard let data = try? Data(contentsOf: Self.url), let all = try? JSONDecoder().decode([Session].self, from: data) else { return }
         for s in all where s.pid > 1 && (kill(s.pid, 0) == 0 || errno == EPERM) {
             // Whatever it was doing, we missed it; the next event corrects this.
-            if s.state != .done { s.state = .idle }
+            if ![.done, .interrupted, .limited].contains(s.state) { s.state = .idle }
             if s.hosted == nil { s.hosted = Procs.isBackgroundHosted(s.pid) }
             sessions[s.key] = s
         }
@@ -386,7 +447,25 @@ final class SessionStore {
             adoptClient(s)
             if Procs.isSharedDaemon(s.pid) { sessions.removeValue(forKey: s.key) }
         }
-        for s in sessions.values { watchExit(s.pid) }
+        for s in sessions.values {
+            watchExit(s.pid)
+            recover(s)
+        }
+    }
+
+    /// A turn that ended while we weren't running, or before we knew to look, ended how its transcript says.
+    private func recover(_ s: Session) {
+        s.transcript = s.transcript ?? TranscriptWatch.find(agent: s.agent, id: s.id)
+        guard s.state != .limited, let t = s.transcript, let stop = TranscriptWatch.last(t) else { return }
+        switch stop {
+        case .interrupted(let why):
+            s.state = .interrupted
+            s.reason = why
+        case .limited:
+            // Only while the limit still holds; the status line rounds, so 99 counts.
+            if let u = Usage.read(s.agent), u.binding.used < 99 { return }
+            limit(s)
+        }
     }
 
     // MARK: debugging

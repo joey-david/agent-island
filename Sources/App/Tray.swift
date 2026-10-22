@@ -1,6 +1,6 @@
 import AppKit
 
-/// Status glyph at the inner end of a tray row: spinner, pulsing dot, or check.
+/// Status glyph at the inner end of a tray row: spinner, pulsing dot, check, pause, or hourglass.
 private final class GlyphView: NSView {
     init(state: AgentState, tint: NSColor) {
         super.init(frame: NSRect(x: 0, y: 0, width: 16, height: 16))
@@ -39,10 +39,11 @@ private final class GlyphView: NSView {
             pulse.repeatCount = .infinity
             dot.add(pulse, forKey: "pulse")
             l.addSublayer(dot)
-        case .done:
-            let img = NSImageView(image: NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil) ?? NSImage())
+        case .done, .interrupted, .limited:
+            let symbol = state == .done ? "checkmark.circle.fill" : state == .limited ? "hourglass.circle.fill" : "pause.circle.fill"
+            let img = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
             img.symbolConfiguration = .init(pointSize: 14, weight: .semibold)
-            img.contentTintColor = .systemGreen
+            img.contentTintColor = IslandController.color(state, tint: tint)
             img.frame = bounds
             addSubview(img)
         case .idle:
@@ -182,8 +183,11 @@ final class TrayView: NSView {
     override var isFlipped: Bool { true }
     override func hitTest(_ p: NSPoint) -> NSView? { nil }
 
+    /// The window nearest its limit, so a spent week isn't hidden behind a fresh five hours.
     private static func usageLabel(_ u: Usage) -> NSTextField {
-        label("5h \(Int(u.fiveHour.rounded()))%", 9.5, .medium, u.fiveHour >= 85 ? .systemOrange : NSColor(white: 1, alpha: 0.4), mono: true)
+        let w = u.binding
+        let color = w.used >= 100 ? .systemRed : w.used >= 85 ? .systemOrange : NSColor(white: 1, alpha: 0.4)
+        return label("\(w.label) \(Int(w.used.rounded()))%", 9.5, .medium, color, mono: true)
     }
 
     private static func label(_ s: String, _ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, mono: Bool = false) -> NSTextField {
@@ -206,7 +210,15 @@ final class TrayView: NSView {
         case .question: return "Waiting for you"
         case .working: return s.action ?? "Thinking…"
         case .done, .idle: return s.state == .done ? "Finished " + Self.ago(s.updated) : "Idle"
+        case .interrupted: return s.reason ?? "Interrupted " + Self.ago(s.updated)
+        case .limited: return s.limitResets.map { "Out of usage until " + Self.when($0) } ?? "Out of usage"
         }
+    }
+
+    private static func when(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate(Calendar.current.isDateInToday(d) ? "jmm" : d.timeIntervalSinceNow < 6 * 86400 ? "EEEjmm" : "dMMMjmm")
+        return f.string(from: d)
     }
 
     /// Terminal titles lead with a spinner or status glyph.
